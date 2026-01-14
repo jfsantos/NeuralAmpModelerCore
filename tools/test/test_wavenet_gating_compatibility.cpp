@@ -32,8 +32,7 @@ class TestWavenetGatingCompatibility {
     // Wavenet uses: input activation (default/linear) and sigmoid for gating
     nam::activations::ActivationIdentity identity_act;
     nam::activations::ActivationSigmoid sigmoid_act;
-    nam::gating_activations::GatingActivation gating_act(
-        &identity_act, &sigmoid_act, channels);
+    nam::gating_activations::GatingActivation gating_act(&identity_act, &sigmoid_act, channels);
 
     // Apply the activation
     gating_act.apply(input, output);
@@ -58,9 +57,8 @@ class TestWavenetGatingCompatibility {
 
         // Check if they match
         if (fabs(output(c, s) - expected) > 1e-6) {
-          std::cerr << "Mismatch at channel " << c << ", sample " << s
-                    << ": expected " << expected << ", got " << output(c, s)
-                    << std::endl;
+          std::cerr << "Mismatch at channel " << c << ", sample " << s << ": expected " << expected << ", got "
+                    << output(c, s) << std::endl;
           assert(false);
         }
       }
@@ -81,8 +79,7 @@ class TestWavenetGatingCompatibility {
 
     nam::activations::ActivationIdentity identity_act;
     nam::activations::ActivationSigmoid sigmoid_act;
-    nam::gating_activations::GatingActivation gating_act(
-        &identity_act, &sigmoid_act, channels);
+    nam::gating_activations::GatingActivation gating_act(&identity_act, &sigmoid_act, channels);
     gating_act.apply(input, output);
 
     // Verify each column was processed independently
@@ -116,8 +113,7 @@ class TestWavenetGatingCompatibility {
 
     nam::activations::ActivationIdentity identity_act;
     nam::activations::ActivationSigmoid sigmoid_act;
-    nam::gating_activations::GatingActivation gating_act(
-        &identity_act, &sigmoid_act, channels);
+    nam::gating_activations::GatingActivation gating_act(&identity_act, &sigmoid_act, channels);
 
     // This should not crash or produce incorrect results due to memory
     // contiguity issues
@@ -152,8 +148,7 @@ class TestWavenetGatingCompatibility {
 
     nam::activations::ActivationIdentity identity_act;
     nam::activations::ActivationSigmoid sigmoid_act;
-    nam::gating_activations::GatingActivation gating_act(
-        &identity_act, &sigmoid_act, channels);
+    nam::gating_activations::GatingActivation gating_act(&identity_act, &sigmoid_act, channels);
     gating_act.apply(input, output);
 
     // Verify dimensions

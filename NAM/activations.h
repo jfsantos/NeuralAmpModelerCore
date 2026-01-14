@@ -21,8 +21,7 @@ inline float hard_tanh(float x) {
   return t > 1 ? 1 : t;
 }
 
-inline float leaky_hardtanh(float x, float min_val, float max_val,
-                            float min_slope, float max_slope) {
+inline float leaky_hardtanh(float x, float min_val, float max_val, float min_slope, float max_slope) {
   if (x < min_val) {
     return (x - min_val) * min_slope + min_val;
   } else if (x > max_val) {
@@ -36,11 +35,8 @@ inline float fast_tanh(const float x) {
   const float ax = fabsf(x);
   const float x2 = x * x;
 
-  return (x *
-          (2.45550750702956f + 2.45550750702956f * ax +
-           (0.893229853513558f + 0.821226666969744f * ax) * x2) /
-          (2.44506634652299f +
-           (2.44506634652299f + x2) * fabsf(x + 0.814642734961073f * x * ax)));
+  return (x * (2.45550750702956f + 2.45550750702956f * ax + (0.893229853513558f + 0.821226666969744f * ax) * x2) /
+          (2.44506634652299f + (2.44506634652299f + x2) * fabsf(x + 0.814642734961073f * x * ax)));
 }
 
 inline float fast_sigmoid(const float x) {
@@ -87,8 +83,7 @@ class Activation {
   static void enable_fast_tanh();
   static void disable_fast_tanh();
   static bool using_fast_tanh;
-  static void enable_lut(std::string function_name, float min, float max,
-                         std::size_t n_points);
+  static void enable_lut(std::string function_name, float min, float max, std::size_t n_points);
   static void disable_lut(std::string function_name);
 
  protected:
@@ -124,8 +119,7 @@ class ActivationHardTanh : public Activation {
 class ActivationLeakyHardTanh : public Activation {
  public:
   ActivationLeakyHardTanh() = default;
-  ActivationLeakyHardTanh(float min_val_, float max_val_, float min_slope_,
-                          float max_slope_) {
+  ActivationLeakyHardTanh(float min_val_, float max_val_, float min_slope_, float max_slope_) {
     min_val = min_val_;
     max_val = max_val_;
     min_slope = min_slope_;
@@ -133,8 +127,7 @@ class ActivationLeakyHardTanh : public Activation {
   }
   void apply(float* data, long size) override {
     for (long pos = 0; pos < size; pos++) {
-      data[pos] =
-          leaky_hardtanh(data[pos], min_val, max_val, min_slope, max_slope);
+      data[pos] = leaky_hardtanh(data[pos], min_val, max_val, min_slope, max_slope);
     }
   }
 
@@ -200,12 +193,10 @@ class ActivationPReLU : public Activation {
     assert(actual_channels == n_channels);
 
     // Apply each negative slope to its corresponding channel
-    for (int channel = 0; channel < std::min(n_channels, actual_channels);
-         channel++) {
+    for (int channel = 0; channel < std::min(n_channels, actual_channels); channel++) {
       // Apply the negative slope to all time steps in this channel
       for (int time_step = 0; time_step < matrix.rows(); time_step++) {
-        matrix(channel, time_step) =
-            leaky_relu(matrix(channel, time_step), negative_slopes[channel]);
+        matrix(channel, time_step) = leaky_relu(matrix(channel, time_step), negative_slopes[channel]);
       }
     }
   }
@@ -243,8 +234,7 @@ class ActivationHardSwish : public Activation {
 
 class FastLUTActivation : public Activation {
  public:
-  FastLUTActivation(float min_x, float max_x, std::size_t size,
-                    std::function<float(float)> f)
+  FastLUTActivation(float min_x, float max_x, std::size_t size, std::function<float(float)> f)
       : min_x_(min_x), max_x_(max_x), size_(size) {
     step_ = (max_x - min_x) / (size - 1);
     inv_step_ = 1.0f / step_;

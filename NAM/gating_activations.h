@@ -29,11 +29,8 @@ class GatingActivation {
    * @param input_channels Number of input channels (default: 1)
    * @param gating_channels Number of gating channels (default: 1)
    */
-  GatingActivation(activations::Activation* input_act,
-                   activations::Activation* gating_act, int input_channels = 1)
-      : input_activation(input_act),
-        gating_activation(gating_act),
-        num_channels(input_channels) {
+  GatingActivation(activations::Activation* input_act, activations::Activation* gating_act, int input_channels = 1)
+      : input_activation(input_act), gating_activation(gating_act), num_channels(input_channels) {
     assert(num_channels > 0);
   }
 
@@ -61,14 +58,12 @@ class GatingActivation {
       input_activation->apply(input_block);
 
       // Apply activation to gating channels
-      Eigen::MatrixXf gating_block =
-          input.block(num_channels, i, num_channels, 1);
+      Eigen::MatrixXf gating_block = input.block(num_channels, i, num_channels, 1);
       gating_activation->apply(gating_block);
 
       // Element-wise multiplication and store result
       // For wavenet compatibility, we assume one-to-one mapping
-      output.block(0, i, num_channels, 1) =
-          input_block.array() * gating_block.array();
+      output.block(0, i, num_channels, 1) = input_block.array() * gating_block.array();
     }
   }
 
@@ -100,14 +95,10 @@ class BlendingActivation {
    * @param blend_act Activation function for blending channels
    * @param input_channels Number of input channels
    */
-  BlendingActivation(activations::Activation* input_act,
-                     activations::Activation* blend_act, int input_channels = 1)
-      : input_activation(input_act),
-        blending_activation(blend_act),
-        num_channels(input_channels) {
+  BlendingActivation(activations::Activation* input_act, activations::Activation* blend_act, int input_channels = 1)
+      : input_activation(input_act), blending_activation(blend_act), num_channels(input_channels) {
     if (num_channels <= 0) {
-      throw std::invalid_argument(
-          "BlendingActivation: number of input channels must be positive");
+      throw std::invalid_argument("BlendingActivation: number of input channels must be positive");
     }
     // Initialize input buffer with correct size
     // Note: current code copies column-by-column so we only need (num_channels,
@@ -141,15 +132,13 @@ class BlendingActivation {
       input_activation->apply(input_block);
 
       // Apply activation to blend channels to compute alpha
-      Eigen::MatrixXf blend_block =
-          input.block(num_channels, i, num_channels, 1);
+      Eigen::MatrixXf blend_block = input.block(num_channels, i, num_channels, 1);
       blending_activation->apply(blend_block);
 
       // Weighted blending: alpha * activated_input + (1 - alpha) *
       // pre_activation_input
       output.block(0, i, num_channels, 1) =
-          blend_block.array() * input_block.array() +
-          (1.0f - blend_block.array()) * input_buffer.array();
+          blend_block.array() * input_block.array() + (1.0f - blend_block.array()) * input_buffer.array();
     }
   }
 

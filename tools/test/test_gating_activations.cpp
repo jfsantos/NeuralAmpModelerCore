@@ -24,8 +24,7 @@ class TestGatingActivation {
     // gating channel)
     nam::activations::ActivationIdentity identity_act;
     nam::activations::ActivationSigmoid sigmoid_act;
-    nam::gating_activations::GatingActivation gating_act(&identity_act,
-                                                         &sigmoid_act, 1);
+    nam::gating_activations::GatingActivation gating_act(&identity_act, &sigmoid_act, 1);
 
     // Apply the activation
     gating_act.apply(input, output);
@@ -51,8 +50,7 @@ class TestGatingActivation {
     Eigen::MatrixXf output(1, 2);
 
     // Create gating activation with custom activations
-    nam::gating_activations::GatingActivation gating_act(&leaky_relu,
-                                                         &leaky_relu2, 1);
+    nam::gating_activations::GatingActivation gating_act(&leaky_relu, &leaky_relu2, 1);
 
     // Apply the activation
     gating_act.apply(input, output);
@@ -85,8 +83,7 @@ class TestBlendingActivation {
     // Create blending activation (1 input channel)
     nam::activations::ActivationIdentity identity_act;
     nam::activations::ActivationIdentity identity_blend_act;
-    nam::gating_activations::BlendingActivation blending_act(
-        &identity_act, &identity_blend_act, 1);
+    nam::gating_activations::BlendingActivation blending_act(&identity_act, &identity_blend_act, 1);
 
     // Apply the activation
     blending_act.apply(input, output);
@@ -109,8 +106,7 @@ class TestBlendingActivation {
     // Test with default (linear) activations
     nam::activations::ActivationIdentity identity_act;
     nam::activations::ActivationIdentity identity_blend_act;
-    nam::gating_activations::BlendingActivation blending_act(
-        &identity_act, &identity_blend_act, 1);
+    nam::gating_activations::BlendingActivation blending_act(&identity_act, &identity_blend_act, 1);
     blending_act.apply(input, output);
 
     // With linear activations, blending should be:
@@ -121,10 +117,8 @@ class TestBlendingActivation {
     assert(fabs(output(0, 1) - (-1.0f)) < 1e-6);
 
     // Test with sigmoid blending activation
-    nam::activations::Activation* sigmoid_act =
-        nam::activations::Activation::get_activation("Sigmoid");
-    nam::gating_activations::BlendingActivation blending_act2(&identity_act,
-                                                              sigmoid_act, 1);
+    nam::activations::Activation* sigmoid_act = nam::activations::Activation::get_activation("Sigmoid");
+    nam::gating_activations::BlendingActivation blending_act2(&identity_act, sigmoid_act, 1);
     blending_act2.apply(input, output);
 
     // With sigmoid blending, alpha values should be between 0 and 1
@@ -140,8 +134,7 @@ class TestBlendingActivation {
     assert(fabs(output(0, 0) - 1.0f) < 1e-6);
     assert(fabs(output(0, 1) - (-1.0f)) < 1e-6);
 
-    std::cout << "BlendingActivation blending behavior test passed"
-              << std::endl;
+    std::cout << "BlendingActivation blending behavior test passed" << std::endl;
   }
 
   static void test_with_custom_activations() {
@@ -156,8 +149,7 @@ class TestBlendingActivation {
     Eigen::MatrixXf output(1, 2);
 
     // Create blending activation with custom activations
-    nam::gating_activations::BlendingActivation blending_act(&leaky_relu,
-                                                             &leaky_relu2, 1);
+    nam::gating_activations::BlendingActivation blending_act(&leaky_relu, &leaky_relu2, 1);
 
     // Apply the activation
     blending_act.apply(input, output);
@@ -166,8 +158,7 @@ class TestBlendingActivation {
     assert(output.rows() == 1);
     assert(output.cols() == 2);
 
-    std::cout << "BlendingActivation custom activations test passed"
-              << std::endl;
+    std::cout << "BlendingActivation custom activations test passed" << std::endl;
   }
 
   static void test_error_handling() {
@@ -177,8 +168,7 @@ class TestBlendingActivation {
 
     nam::activations::ActivationIdentity identity_act;
     nam::activations::ActivationIdentity identity_blend_act;
-    nam::gating_activations::BlendingActivation blending_act(
-        &identity_act, &identity_blend_act, 1);
+    nam::gating_activations::BlendingActivation blending_act(&identity_act, &identity_blend_act, 1);
 
     // This should trigger an assert and terminate the program
     // We can't easily test asserts in a unit test framework without special
@@ -200,8 +190,7 @@ class TestBlendingActivation {
 
     nam::activations::ActivationIdentity identity_act;
     nam::activations::ActivationIdentity identity_blend_act;
-    nam::gating_activations::BlendingActivation blending_act(
-        &identity_act, &identity_blend_act, 1);
+    nam::gating_activations::BlendingActivation blending_act(&identity_act, &identity_blend_act, 1);
     blending_act.apply(input, output);
 
     assert(fabs(output(0, 0) - 0.0f) < 1e-6);

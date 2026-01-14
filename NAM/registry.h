@@ -12,8 +12,7 @@
 namespace nam {
 namespace factory {
 // TODO get rid of weights and expectedSampleRate
-using FactoryFunction = std::function<std::unique_ptr<DSP>(
-    const nlohmann::json&, std::vector<float>&, const double)>;
+using FactoryFunction = std::function<std::unique_ptr<DSP>(const nlohmann::json&, std::vector<float>&, const double)>;
 
 // Register factories for instantiating DSP objects
 class FactoryRegistry {
@@ -31,9 +30,7 @@ class FactoryRegistry {
     factories_[key] = func;
   }
 
-  std::unique_ptr<DSP> create(const std::string& name,
-                              const nlohmann::json& config,
-                              std::vector<float>& weights,
+  std::unique_ptr<DSP> create(const std::string& name, const nlohmann::json& config, std::vector<float>& weights,
                               const double expectedSampleRate) const {
     auto it = factories_.find(name);
     if (it != factories_.end()) {

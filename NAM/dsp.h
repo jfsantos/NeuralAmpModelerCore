@@ -21,15 +21,7 @@
 #define NAM_UNKNOWN_EXPECTED_SAMPLE_RATE -1.0
 
 namespace nam {
-enum EArchitectures {
-  kLinear = 0,
-  kConvNet,
-  kLSTM,
-  kCatLSTM,
-  kWaveNet,
-  kCatWaveNet,
-  kNumModels
-};
+enum EArchitectures { kLinear = 0, kConvNet, kLSTM, kCatLSTM, kWaveNet, kCatWaveNet, kNumModels };
 
 class DSP {
  public:
@@ -52,8 +44,7 @@ class DSP {
   // 1. The core DSP algorithm is run (This is what should probably be
   //    overridden in subclasses).
   // 2. The output level is applied and the result stored to `output`.
-  virtual void process(NAM_SAMPLE* input, NAM_SAMPLE* output,
-                       const int num_frames);
+  virtual void process(NAM_SAMPLE* input, NAM_SAMPLE* output, const int num_frames);
   // Expected sample rate, in Hz.
   // TODO throw if it doesn't know.
   double GetExpectedSampleRate() const {
@@ -157,8 +148,7 @@ class Buffer : public DSP {
   std::vector<float> _output_buffer;
 
   void _advance_input_buffer_(const int num_frames);
-  void _set_receptive_field(const int new_receptive_field,
-                            const int input_buffer_size);
+  void _set_receptive_field(const int new_receptive_field, const int input_buffer_size);
   void _set_receptive_field(const int new_receptive_field);
   void _reset_input_buffer();
   // Use this->_input_post_gain
@@ -169,11 +159,9 @@ class Buffer : public DSP {
 // Basic linear model (an IR!)
 class Linear : public Buffer {
  public:
-  Linear(const int receptive_field, const bool _bias,
-         const std::vector<float>& weights,
+  Linear(const int receptive_field, const bool _bias, const std::vector<float>& weights,
          const double expected_sample_rate = -1.0);
-  void process(NAM_SAMPLE* input, NAM_SAMPLE* output,
-               const int num_frames) override;
+  void process(NAM_SAMPLE* input, NAM_SAMPLE* output, const int num_frames) override;
 
  protected:
   Eigen::VectorXf _weight;
@@ -181,8 +169,7 @@ class Linear : public Buffer {
 };
 
 namespace linear {
-std::unique_ptr<DSP> Factory(const nlohmann::json& config,
-                             std::vector<float>& weights,
+std::unique_ptr<DSP> Factory(const nlohmann::json& config, std::vector<float>& weights,
                              const double expectedSampleRate);
 }  // namespace linear
 
@@ -195,18 +182,15 @@ class Conv1D {
     this->_dilation = 1;
   };
   void set_weights_(std::vector<float>::iterator& weights);
-  void set_size_(const int in_channels, const int out_channels,
-                 const int kernel_size, const bool do_bias,
+  void set_size_(const int in_channels, const int out_channels, const int kernel_size, const bool do_bias,
                  const int _dilation);
-  void set_size_and_weights_(const int in_channels, const int out_channels,
-                             const int kernel_size, const int _dilation,
-                             const bool do_bias,
-                             std::vector<float>::iterator& weights);
+  void set_size_and_weights_(const int in_channels, const int out_channels, const int kernel_size, const int _dilation,
+                             const bool do_bias, std::vector<float>::iterator& weights);
   // Process from input to output
   //  Rightmost indices of input go from i_start for ncols,
   //  Indices on output for from j_start (to j_start + ncols - i_start)
-  void process_(const Eigen::MatrixXf& input, Eigen::MatrixXf& output,
-                const long i_start, const long ncols, const long j_start) const;
+  void process_(const Eigen::MatrixXf& input, Eigen::MatrixXf& output, const long i_start, const long ncols,
+                const long j_start) const;
   long get_in_channels() const {
     return this->_weight.size() > 0 ? this->_weight[0].cols() : 0;
   };
@@ -240,8 +224,7 @@ class Conv1x1 {
   Eigen::MatrixXf process(const Eigen::MatrixXf& input) const {
     return process(input, (int)input.cols());
   };
-  Eigen::MatrixXf process(const Eigen::MatrixXf& input,
-                          const int num_frames) const;
+  Eigen::MatrixXf process(const Eigen::MatrixXf& input, const int num_frames) const;
   // Store output to pre-allocated _output; access with GetOutput()
   void process_(const Eigen::MatrixXf& input, const int num_frames);
 
@@ -298,8 +281,7 @@ void verify_config_version(const std::string version);
 std::unique_ptr<DSP> get_dsp(const std::filesystem::path model_file);
 // Creates an instance of DSP. Also returns a dspData struct that holds the data
 // of the model.
-std::unique_ptr<DSP> get_dsp(const std::filesystem::path model_file,
-                             dspData& returnedConfig);
+std::unique_ptr<DSP> get_dsp(const std::filesystem::path model_file, dspData& returnedConfig);
 // Instantiates a DSP object from dsp_config struct.
 std::unique_ptr<DSP> get_dsp(dspData& conf);
 // Legacy loader for directory-type DSPs

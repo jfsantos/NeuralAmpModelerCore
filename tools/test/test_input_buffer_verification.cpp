@@ -23,15 +23,13 @@ class TestInputBufferVerification {
     // Use ReLU activation which will set negative values to 0
     nam::activations::ActivationReLU relu_act;
     nam::activations::ActivationIdentity identity_act;
-    nam::gating_activations::BlendingActivation blending_act(&relu_act,
-                                                             &identity_act, 1);
+    nam::gating_activations::BlendingActivation blending_act(&relu_act, &identity_act, 1);
 
     // Apply the activation
     blending_act.apply(input, output);
 
     std::cout << "Input buffer verification test:" << std::endl;
-    std::cout << "Input: " << input(0, 0) << " (will be modified by ReLU)"
-              << std::endl;
+    std::cout << "Input: " << input(0, 0) << " (will be modified by ReLU)" << std::endl;
     std::cout << "Blend value: " << input(1, 0) << std::endl;
     std::cout << "Output: " << output(0, 0) << std::endl;
 
@@ -59,8 +57,7 @@ class TestInputBufferVerification {
     // Use LeakyReLU with slope 0.1
     nam::activations::ActivationLeakyReLU leaky_relu(0.1f);
     nam::activations::ActivationIdentity identity_act;
-    nam::gating_activations::BlendingActivation blending_act(&leaky_relu,
-                                                             &identity_act, 1);
+    nam::gating_activations::BlendingActivation blending_act(&leaky_relu, &identity_act, 1);
 
     blending_act.apply(input, output);
 

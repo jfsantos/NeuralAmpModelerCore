@@ -71,10 +71,8 @@ std::unique_ptr<DSP> get_dsp(const std::filesystem::path config_filename) {
   return get_dsp(config_filename, temp);
 }
 
-std::unique_ptr<DSP> get_dsp(const std::filesystem::path config_filename,
-                             dspData& returnedConfig) {
-  if (!std::filesystem::exists(config_filename))
-    throw std::runtime_error("Config file doesn't exist!\n");
+std::unique_ptr<DSP> get_dsp(const std::filesystem::path config_filename, dspData& returnedConfig) {
+  if (!std::filesystem::exists(config_filename)) throw std::runtime_error("Config file doesn't exist!\n");
   std::ifstream i(config_filename);
   nlohmann::json j;
   i >> j;
@@ -131,8 +129,8 @@ std::unique_ptr<DSP> get_dsp(dspData& conf) {
   const double expectedSampleRate = conf.expected_sample_rate;
 
   // Initialize using registry-based factory
-  std::unique_ptr<DSP> out = nam::factory::FactoryRegistry::instance().create(
-      architecture, config, weights, expectedSampleRate);
+  std::unique_ptr<DSP> out =
+      nam::factory::FactoryRegistry::instance().create(architecture, config, weights, expectedSampleRate);
   if (loudness.have) {
     out->SetLoudness(loudness.value);
   }

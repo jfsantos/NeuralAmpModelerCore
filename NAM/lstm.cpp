@@ -7,8 +7,7 @@
 
 #include "registry.h"
 
-nam::lstm::LSTMCell::LSTMCell(const int input_size, const int hidden_size,
-                              std::vector<float>::iterator& weights) {
+nam::lstm::LSTMCell::LSTMCell(const int input_size, const int hidden_size, std::vector<float>::iterator& weights) {
   // Resize arrays
   this->_w.resize(4 * hidden_size, input_size + hidden_size);
   this->_b.resize(4 * hidden_size);
@@ -43,45 +42,36 @@ void nam::lstm::LSTMCell::process_(const Eigen::VectorXf& x) {
     for (auto i = 0; i < hidden_size; i++)
       this->_c[i] =
           activations::fast_sigmoid(this->_ifgo[i + f_offset]) * this->_c[i] +
-          activations::fast_sigmoid(this->_ifgo[i + i_offset]) *
-              activations::fast_tanh(this->_ifgo[i + g_offset]);
+          activations::fast_sigmoid(this->_ifgo[i + i_offset]) * activations::fast_tanh(this->_ifgo[i + g_offset]);
 
     for (int i = 0; i < hidden_size; i++)
       this->_xh[i + h_offset] =
-          activations::fast_sigmoid(this->_ifgo[i + o_offset]) *
-          activations::fast_tanh(this->_c[i]);
+          activations::fast_sigmoid(this->_ifgo[i + o_offset]) * activations::fast_tanh(this->_c[i]);
   } else {
     for (auto i = 0; i < hidden_size; i++)
-      this->_c[i] =
-          activations::sigmoid(this->_ifgo[i + f_offset]) * this->_c[i] +
-          activations::sigmoid(this->_ifgo[i + i_offset]) *
-              tanhf(this->_ifgo[i + g_offset]);
+      this->_c[i] = activations::sigmoid(this->_ifgo[i + f_offset]) * this->_c[i] +
+                    activations::sigmoid(this->_ifgo[i + i_offset]) * tanhf(this->_ifgo[i + g_offset]);
 
     for (int i = 0; i < hidden_size; i++)
-      this->_xh[i + h_offset] =
-          activations::sigmoid(this->_ifgo[i + o_offset]) * tanhf(this->_c[i]);
+      this->_xh[i + h_offset] = activations::sigmoid(this->_ifgo[i + o_offset]) * tanhf(this->_c[i]);
   }
 }
 
-nam::lstm::LSTM::LSTM(const int num_layers, const int input_size,
-                      const int hidden_size, std::vector<float>& weights,
+nam::lstm::LSTM::LSTM(const int num_layers, const int input_size, const int hidden_size, std::vector<float>& weights,
                       const double expected_sample_rate)
     : DSP(expected_sample_rate) {
   this->_input.resize(1);
   std::vector<float>::iterator it = weights.begin();
   for (int i = 0; i < num_layers; i++)
-    this->_layers.push_back(
-        LSTMCell(i == 0 ? input_size : hidden_size, hidden_size, it));
+    this->_layers.push_back(LSTMCell(i == 0 ? input_size : hidden_size, hidden_size, it));
   this->_head_weight.resize(hidden_size);
   for (int i = 0; i < hidden_size; i++) this->_head_weight[i] = *(it++);
   this->_head_bias = *(it++);
   assert(it == weights.end());
 }
 
-void nam::lstm::LSTM::process(NAM_SAMPLE* input, NAM_SAMPLE* output,
-                              const int num_frames) {
-  for (int i = 0; i < num_frames; i++)
-    output[i] = this->_process_sample(input[i]);
+void nam::lstm::LSTM::process(NAM_SAMPLE* input, NAM_SAMPLE* output, const int num_frames) {
+  for (int i = 0; i < num_frames; i++) output[i] = this->_process_sample(input[i]);
 }
 
 int nam::lstm::LSTM::PrewarmSamples() {
@@ -95,22 +85,17 @@ float nam::lstm::LSTM::_process_sample(const float x) {
   if (this->_layers.size() == 0) return x;
   this->_input(0) = x;
   this->_layers[0].process_(this->_input);
-  for (size_t i = 1; i < this->_layers.size(); i++)
-    this->_layers[i].process_(this->_layers[i - 1].get_hidden_state());
-  return this->_head_weight.dot(
-             this->_layers[this->_layers.size() - 1].get_hidden_state()) +
-         this->_head_bias;
+  for (size_t i = 1; i < this->_layers.size(); i++) this->_layers[i].process_(this->_layers[i - 1].get_hidden_state());
+  return this->_head_weight.dot(this->_layers[this->_layers.size() - 1].get_hidden_state()) + this->_head_bias;
 }
 
 // Factory to instantiate from nlohmann json
-std::unique_ptr<nam::DSP> nam::lstm::Factory(const nlohmann::json& config,
-                                             std::vector<float>& weights,
+std::unique_ptr<nam::DSP> nam::lstm::Factory(const nlohmann::json& config, std::vector<float>& weights,
                                              const double expectedSampleRate) {
   const int num_layers = config["num_layers"];
   const int input_size = config["input_size"];
   const int hidden_size = config["hidden_size"];
-  return std::make_unique<nam::lstm::LSTM>(num_layers, input_size, hidden_size,
-                                           weights, expectedSampleRate);
+  return std::make_unique<nam::lstm::LSTM>(num_layers, input_size, hidden_size, weights, expectedSampleRate);
 }
 
 // Register the factory

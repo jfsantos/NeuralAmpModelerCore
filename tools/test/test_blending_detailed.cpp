@@ -27,8 +27,7 @@ class TestBlendingDetailed {
     // Test with default (linear) activations
     nam::activations::ActivationIdentity identity_act;
     nam::activations::ActivationIdentity identity_blend_act;
-    nam::gating_activations::BlendingActivation blending_act(
-        &identity_act, &identity_blend_act, 2);
+    nam::gating_activations::BlendingActivation blending_act(&identity_act, &identity_blend_act, 2);
     blending_act.apply(input, output);
 
     std::cout << "Blending with linear activations:" << std::endl;
@@ -46,10 +45,8 @@ class TestBlendingDetailed {
     assert(fabs(output(1, 1) - 4.0f) < 1e-6);
 
     // Test with sigmoid blending activation
-    nam::activations::Activation* sigmoid_act =
-        nam::activations::Activation::get_activation("Sigmoid");
-    nam::gating_activations::BlendingActivation blending_act_sigmoid(
-        &identity_act, sigmoid_act, 2);
+    nam::activations::Activation* sigmoid_act = nam::activations::Activation::get_activation("Sigmoid");
+    nam::gating_activations::BlendingActivation blending_act_sigmoid(&identity_act, sigmoid_act, 2);
 
     Eigen::MatrixXf output_sigmoid(2, 2);
     blending_act_sigmoid.apply(input, output_sigmoid);
@@ -90,8 +87,7 @@ class TestBlendingDetailed {
     // Test with ReLU activation on input (which will change values < 0 to 0)
     nam::activations::ActivationReLU relu_act;
     nam::activations::ActivationIdentity identity_act;
-    nam::gating_activations::BlendingActivation blending_act(&relu_act,
-                                                             &identity_act, 1);
+    nam::gating_activations::BlendingActivation blending_act(&relu_act, &identity_act, 1);
 
     blending_act.apply(input, output);
 

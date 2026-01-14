@@ -55,8 +55,8 @@ class TestFastTanh {
     // expectedOutputs.push_back(-0.01f);
 
     a->apply(inputs.data(), (long)inputs.size());
-    for (auto itActual = inputs.begin(), itExpected = expectedOutputs.begin();
-         itActual != inputs.end(); ++itActual, ++itExpected) {
+    for (auto itActual = inputs.begin(), itExpected = expectedOutputs.begin(); itActual != inputs.end();
+         ++itActual, ++itExpected) {
       assert(*itActual == *itExpected);
     }
   };
@@ -102,8 +102,8 @@ class TestLeakyReLU {
     expectedOutputs.push_back(-0.01f);
 
     a->apply(inputs.data(), (long)inputs.size());
-    for (auto itActual = inputs.begin(), itExpected = expectedOutputs.begin();
-         itActual != inputs.end(); ++itActual, ++itExpected) {
+    for (auto itActual = inputs.begin(), itExpected = expectedOutputs.begin(); itActual != inputs.end();
+         ++itActual, ++itExpected) {
       assert(*itActual == *itExpected);
     }
   };
@@ -132,8 +132,7 @@ class TestPReLU {
     data << -1.0f, 0.5f, 1.0f, -2.0f, -0.5f, 0.0f;
 
     // Create PReLU with different slopes for each channel
-    std::vector<float> slopes = {
-        0.01f, 0.05f};  // slope 0.01 for channel 0, 0.05 for channel 1
+    std::vector<float> slopes = {0.01f, 0.05f};  // slope 0.01 for channel 0, 0.05 for channel 1
     nam::activations::ActivationPReLU prelu(slopes);
 
     // Apply the activation

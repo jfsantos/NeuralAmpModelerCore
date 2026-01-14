@@ -16,23 +16,21 @@ void test_gated() {
   const int dilation = 1;
   const std::string activation = "ReLU";
   const bool gated = true;
-  auto layer = nam::wavenet::_Layer(conditionSize, channels, kernelSize,
-                                    dilation, activation, gated);
+  auto layer = nam::wavenet::_Layer(conditionSize, channels, kernelSize, dilation, activation, gated);
 
   // Conv, input mixin, 1x1
-  std::vector<float> weights{
-      // Conv (weight, bias)  NOTE: 2 channels out bc gated, so shapes are
-      // (2,1,1), (2,)
-      1.0f, 1.0f, 0.0f, 0.0f,
-      // Input mixin (weight only: (2,1,1))
-      1.0f, -1.0f,
-      // 1x1 (weight (1,1,1), bias (1,))
-      // NOTE: Weights are (1,1) on conv, (1,-1), so the inputs sum on the upper
-      // channel and cancel on the lower.
-      // This should give us a nice zero if the input & condition are the same,
-      // so that'll sigmoid to 0.5 for the
-      // gate.
-      1.0f, 0.0f};
+  std::vector<float> weights{// Conv (weight, bias)  NOTE: 2 channels out bc gated, so shapes are
+                             // (2,1,1), (2,)
+                             1.0f, 1.0f, 0.0f, 0.0f,
+                             // Input mixin (weight only: (2,1,1))
+                             1.0f, -1.0f,
+                             // 1x1 (weight (1,1,1), bias (1,))
+                             // NOTE: Weights are (1,1) on conv, (1,-1), so the inputs sum on the upper
+                             // channel and cancel on the lower.
+                             // This should give us a nice zero if the input & condition are the same,
+                             // so that'll sigmoid to 0.5 for the
+                             // gate.
+                             1.0f, 0.0f};
   auto it = weights.begin();
   layer.set_weights_(it);
   assert(it == weights.end());

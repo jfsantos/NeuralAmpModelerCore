@@ -19,8 +19,7 @@ namespace lstm {
 // h hidden state
 class LSTMCell {
  public:
-  LSTMCell(const int input_size, const int hidden_size,
-           std::vector<float>::iterator& weights);
+  LSTMCell(const int input_size, const int hidden_size, std::vector<float>::iterator& weights);
   Eigen::VectorXf get_hidden_state() const {
     return this->_xh(Eigen::placeholders::lastN(this->_get_hidden_size()));
   };
@@ -53,8 +52,8 @@ class LSTMCell {
 // The multi-layer LSTM model
 class LSTM : public DSP {
  public:
-  LSTM(const int num_layers, const int input_size, const int hidden_size,
-       std::vector<float>& weights, const double expected_sample_rate = -1.0);
+  LSTM(const int num_layers, const int input_size, const int hidden_size, std::vector<float>& weights,
+       const double expected_sample_rate = -1.0);
   ~LSTM() = default;
 
  protected:
@@ -63,8 +62,7 @@ class LSTM : public DSP {
 
   Eigen::VectorXf _head_weight;
   float _head_bias;
-  void process(NAM_SAMPLE* input, NAM_SAMPLE* output,
-               const int num_frames) override;
+  void process(NAM_SAMPLE* input, NAM_SAMPLE* output, const int num_frames) override;
   std::vector<LSTMCell> _layers;
 
   float _process_sample(const float x);
@@ -76,8 +74,7 @@ class LSTM : public DSP {
 };
 
 // Factory to instantiate from nlohmann json
-std::unique_ptr<DSP> Factory(const nlohmann::json& config,
-                             std::vector<float>& weights,
+std::unique_ptr<DSP> Factory(const nlohmann::json& config, std::vector<float>& weights,
                              const double expectedSampleRate);
 
 };  // namespace lstm

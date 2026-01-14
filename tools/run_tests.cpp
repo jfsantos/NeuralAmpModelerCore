@@ -54,32 +54,24 @@ int main() {
   //  test_gating_activations::TestGatingActivation::test_error_handling();
 
   // Wavenet gating compatibility tests
-  test_wavenet_gating_compatibility::TestWavenetGatingCompatibility::
-      test_wavenet_style_gating();
-  test_wavenet_gating_compatibility::TestWavenetGatingCompatibility::
-      test_column_by_column_processing();
-  test_wavenet_gating_compatibility::TestWavenetGatingCompatibility::
-      test_memory_contiguity();
-  test_wavenet_gating_compatibility::TestWavenetGatingCompatibility::
-      test_multiple_channels();
+  test_wavenet_gating_compatibility::TestWavenetGatingCompatibility::test_wavenet_style_gating();
+  test_wavenet_gating_compatibility::TestWavenetGatingCompatibility::test_column_by_column_processing();
+  test_wavenet_gating_compatibility::TestWavenetGatingCompatibility::test_memory_contiguity();
+  test_wavenet_gating_compatibility::TestWavenetGatingCompatibility::test_multiple_channels();
 
   test_gating_activations::TestBlendingActivation::test_basic_functionality();
   test_gating_activations::TestBlendingActivation::test_blending_behavior();
-  test_gating_activations::TestBlendingActivation::
-      test_with_custom_activations();
+  test_gating_activations::TestBlendingActivation::test_with_custom_activations();
   //  test_gating_activations::TestBlendingActivation::test_error_handling();
   test_gating_activations::TestBlendingActivation::test_edge_cases();
 
   // Detailed blending tests
-  test_blending_detailed::TestBlendingDetailed::
-      test_blending_with_different_activations();
+  test_blending_detailed::TestBlendingDetailed::test_blending_with_different_activations();
   test_blending_detailed::TestBlendingDetailed::test_input_buffer_usage();
 
   // Input buffer verification tests
-  test_input_buffer_verification::TestInputBufferVerification::
-      test_buffer_stores_pre_activation_values();
-  test_input_buffer_verification::TestInputBufferVerification::
-      test_buffer_with_different_activations();
+  test_input_buffer_verification::TestInputBufferVerification::test_buffer_stores_pre_activation_values();
+  test_input_buffer_verification::TestInputBufferVerification::test_buffer_with_different_activations();
 
   std::cout << "Success!" << std::endl;
   return 0;

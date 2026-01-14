@@ -12,20 +12,19 @@ namespace wavenet {
 // Rework the initialization API slightly. Merge w/ dsp.h later.
 class _DilatedConv : public Conv1D {
  public:
-  _DilatedConv(const int in_channels, const int out_channels,
-               const int kernel_size, const int bias, const int dilation);
+  _DilatedConv(const int in_channels, const int out_channels, const int kernel_size, const int bias,
+               const int dilation);
 };
 
 class _Layer {
  public:
-  _Layer(const int condition_size, const int channels, const int kernel_size,
-         const int dilation, const std::string activation, const bool gated)
-      : _conv(channels, gated ? 2 * channels : channels, kernel_size, true,
-              dilation),
+  _Layer(const int condition_size, const int channels, const int kernel_size, const int dilation,
+         const std::string activation, const bool gated)
+      : _conv(channels, gated ? 2 * channels : channels, kernel_size, true, dilation),
         _input_mixin(condition_size, gated ? 2 * channels : channels, false),
         _1x1(channels, channels, true),
-        _activation(activations::Activation::get_activation(
-            activation))  // needs to support activations with parameters
+        _activation(
+            activations::Activation::get_activation(activation))  // needs to support activations with parameters
         ,
         _gated(gated) {};
   // Resize all arrays to be able to process `maxBufferSize` frames.
@@ -41,9 +40,8 @@ class _Layer {
   // conv layer's first kernel will process :param `j_start`: Index of the first
   // column of the output block that will be written to :param `num_frames`:
   // number of frames to process
-  void process_(const Eigen::MatrixXf& input, const Eigen::MatrixXf& condition,
-                Eigen::MatrixXf& head_input, Eigen::MatrixXf& output,
-                const long i_start, const long j_start, const int num_frames);
+  void process_(const Eigen::MatrixXf& input, const Eigen::MatrixXf& condition, Eigen::MatrixXf& head_input,
+                Eigen::MatrixXf& output, const long i_start, const long j_start, const int num_frames);
   // DEPRECATED - use SetMaxBufferSize() instead
   void set_num_frames_(const long num_frames);
   // The number of channels expected as input/output from this layer
@@ -75,11 +73,9 @@ class _Layer {
 
 class LayerArrayParams {
  public:
-  LayerArrayParams(const int input_size_, const int condition_size_,
-                   const int head_size_, const int channels_,
-                   const int kernel_size_, const std::vector<int>&& dilations_,
-                   const std::string activation_, const bool gated_,
-                   const bool head_bias_)
+  LayerArrayParams(const int input_size_, const int condition_size_, const int head_size_, const int channels_,
+                   const int kernel_size_, const std::vector<int>&& dilations_, const std::string activation_,
+                   const bool gated_, const bool head_bias_)
       : input_size(input_size_),
         condition_size(condition_size_),
         head_size(head_size_),
@@ -104,10 +100,9 @@ class LayerArrayParams {
 // An array of layers with the same channels, kernel sizes, activations.
 class _LayerArray {
  public:
-  _LayerArray(const int input_size, const int condition_size,
-              const int head_size, const int channels, const int kernel_size,
-              const std::vector<int>& dilations, const std::string activation,
-              const bool gated, const bool head_bias);
+  _LayerArray(const int input_size, const int condition_size, const int head_size, const int channels,
+              const int kernel_size, const std::vector<int>& dilations, const std::string activation, const bool gated,
+              const bool head_bias);
 
   void SetMaxBufferSize(const int maxBufferSize);
 
@@ -163,8 +158,7 @@ class _LayerArray {
 // [Act->Conv] x L
 class _Head {
  public:
-  _Head(const int input_size, const int num_layers, const int channels,
-        const std::string activation);
+  _Head(const int input_size, const int num_layers, const int channels, const std::string activation);
   void Reset(const double sampleRate, const int maxBufferSize);
   void set_weights_(std::vector<float>::iterator& weights);
   // NOTE: the head transforms the provided input by applying a nonlinearity
@@ -189,12 +183,10 @@ class _Head {
 // The main WaveNet model
 class WaveNet : public DSP {
  public:
-  WaveNet(const std::vector<LayerArrayParams>& layer_array_params,
-          const float head_scale, const bool with_head,
+  WaveNet(const std::vector<LayerArrayParams>& layer_array_params, const float head_scale, const bool with_head,
           std::vector<float> weights, const double expected_sample_rate = -1.0);
   ~WaveNet() = default;
-  void process(NAM_SAMPLE* input, NAM_SAMPLE* output,
-               const int num_frames) override;
+  void process(NAM_SAMPLE* input, NAM_SAMPLE* output, const int num_frames) override;
   void set_weights_(std::vector<float>& weights);
 
  protected:
@@ -234,8 +226,7 @@ class WaveNet : public DSP {
 };
 
 // Factory to instantiate from nlohmann json
-std::unique_ptr<DSP> Factory(const nlohmann::json& config,
-                             std::vector<float>& weights,
+std::unique_ptr<DSP> Factory(const nlohmann::json& config, std::vector<float>& weights,
                              const double expectedSampleRate);
 };  // namespace wavenet
 };  // namespace nam

@@ -5,8 +5,10 @@ BasedOnStyle: Google
 Standard: c++20
 
 # Common adjustments (optional)
+ColumnLimit: 120
+# Encourages the formatter to respect the longer line limit
+PenaltyBreakBeforeFirstCallParameter: 100
 IndentWidth: 2
-ColumnLimit: 80
 AllowShortFunctionsOnASingleLine: Empty
 
 # Sort includes alphabetically (Google standard)
