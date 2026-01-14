@@ -14,9 +14,9 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Run clang-format check
-        uses: Jeidzeit/clang-format-check@v2
+        uses: jidicula/clang-format-check@v2
         with:
           # This points to your .clang-format file in the root
-          clang-format-version: '15'
+          clang-format-version: '21'
           check-path: '.'
           exclude-regex: 'build/.*|Dependencies/.*' # Ignore build and third-party files
