@@ -1,5 +1,5 @@
-#include <iostream>
 #include <chrono>
+#include <iostream>
 
 #include "NAM/dsp.h"
 
@@ -13,10 +13,8 @@ using std::chrono::milliseconds;
 double inputBuffer[AUDIO_BUFFER_SIZE];
 double outputBuffer[AUDIO_BUFFER_SIZE];
 
-int main(int argc, char* argv[])
-{
-  if (argc > 1)
-  {
+int main(int argc, char* argv[]) {
+  if (argc > 1) {
     const char* modelPath = argv[1];
 
     std::cout << "Loading model " << modelPath << "\n";
@@ -29,8 +27,7 @@ int main(int argc, char* argv[])
     model.reset();
     model = nam::get_dsp(modelPath);
 
-    if (model == nullptr)
-    {
+    if (model == nullptr) {
       std::cerr << "Failed to load model\n";
 
       exit(1);
@@ -42,20 +39,17 @@ int main(int argc, char* argv[])
 
     // Fill input buffer with zeroes.
     // Output buffer doesn't matter.
-    for (int i = 0; i < AUDIO_BUFFER_SIZE; i++)
-    {
+    for (int i = 0; i < AUDIO_BUFFER_SIZE; i++) {
       inputBuffer[i] = 0.0;
     }
 
     std::cout << "Running benchmark\n";
     auto t1 = high_resolution_clock::now();
-    for (size_t i = 0; i < numBuffers; i++)
-    {
+    for (size_t i = 0; i < numBuffers; i++) {
       model->process(inputBuffer, outputBuffer, AUDIO_BUFFER_SIZE);
     }
     auto t2 = high_resolution_clock::now();
     std::cout << "Finished\n";
-
 
     /* Getting number of milliseconds as an integer. */
     auto ms_int = duration_cast<milliseconds>(t2 - t1);
@@ -65,9 +59,7 @@ int main(int argc, char* argv[])
 
     std::cout << ms_int.count() << "ms\n";
     std::cout << ms_double.count() << "ms\n";
-  }
-  else
-  {
+  } else {
     std::cerr << "Usage: benchmodel <model_path>\n";
   }
 

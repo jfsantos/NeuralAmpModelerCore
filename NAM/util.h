@@ -2,13 +2,11 @@
 
 // Utilities
 
+#include <Eigen/Dense>  // Eigen::MatrixXf
 #include <string>
-#include <Eigen/Dense> // Eigen::MatrixXf
 
-namespace nam
-{
-namespace util
-{
+namespace nam {
+namespace util {
 std::string lowercase(const std::string& s);
-}; // namespace util
-}; // namespace nam
+};  // namespace util
+};  // namespace nam

@@ -1,0 +1,22 @@
+name: Format Check
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  check-format:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Run clang-format check
+        uses: jidicula/clang-format-check@v2
+        with:
+          # This points to your .clang-format file in the root
+          clang-format-version: '21'
+          check-path: '.'
+          exclude-regex: 'build/.*|Dependencies/.*' # Ignore build and third-party files

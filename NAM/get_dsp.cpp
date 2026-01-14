@@ -1,27 +1,25 @@
+#include "get_dsp.h"
+
 #include <fstream>
 #include <sstream>
 #include <stdexcept>
 #include <unordered_set>
 
+#include "convnet.h"
 #include "dsp.h"
-#include "registry.h"
 #include "json.hpp"
 #include "lstm.h"
-#include "convnet.h"
+#include "registry.h"
 #include "wavenet.h"
-#include "get_dsp.h"
 
-namespace nam
-{
-struct Version
-{
+namespace nam {
+struct Version {
   int major;
   int minor;
   int patch;
 };
 
-Version ParseVersion(const std::string& versionStr)
-{
+Version ParseVersion(const std::string& versionStr) {
   Version version;
 
   // Split the version string into major, minor, and patch components
@@ -32,34 +30,26 @@ Version ParseVersion(const std::string& versionStr)
   std::getline(ss, patchStr);
 
   // Parse the components as integers and assign them to the version struct
-  try
-  {
+  try {
     version.major = std::stoi(majorStr);
     version.minor = std::stoi(minorStr);
     version.patch = std::stoi(patchStr);
-  }
-  catch (const std::invalid_argument&)
-  {
+  } catch (const std::invalid_argument&) {
     throw std::invalid_argument("Invalid version string: " + versionStr);
-  }
-  catch (const std::out_of_range&)
-  {
+  } catch (const std::out_of_range&) {
     throw std::out_of_range("Version string out of range: " + versionStr);
   }
 
   // Validate the semver components
-  if (version.major < 0 || version.minor < 0 || version.patch < 0)
-  {
+  if (version.major < 0 || version.minor < 0 || version.patch < 0) {
     throw std::invalid_argument("Negative version component: " + versionStr);
   }
   return version;
 }
 
-void verify_config_version(const std::string versionStr)
-{
+void verify_config_version(const std::string versionStr) {
   Version version = ParseVersion(versionStr);
-  if (version.major != 0 || version.minor != 5)
-  {
+  if (version.major != 0 || version.minor != 5) {
     std::stringstream ss;
     ss << "Model config is an unsupported version " << versionStr
        << ". Try either converting the model to a more recent version, or "
@@ -68,27 +58,21 @@ void verify_config_version(const std::string versionStr)
   }
 }
 
-std::vector<float> GetWeights(nlohmann::json const& j)
-{
+std::vector<float> GetWeights(nlohmann::json const& j) {
   auto it = j.find("weights");
-  if (it != j.end())
-  {
+  if (it != j.end()) {
     return *it;
-  }
-  else
+  } else
     throw std::runtime_error("Corrupted model file is missing weights.");
 }
 
-std::unique_ptr<DSP> get_dsp(const std::filesystem::path config_filename)
-{
+std::unique_ptr<DSP> get_dsp(const std::filesystem::path config_filename) {
   dspData temp;
   return get_dsp(config_filename, temp);
 }
 
-std::unique_ptr<DSP> get_dsp(const std::filesystem::path config_filename, dspData& returnedConfig)
-{
-  if (!std::filesystem::exists(config_filename))
-    throw std::runtime_error("Config file doesn't exist!\n");
+std::unique_ptr<DSP> get_dsp(const std::filesystem::path config_filename, dspData& returnedConfig) {
+  if (!std::filesystem::exists(config_filename)) throw std::runtime_error("Config file doesn't exist!\n");
   std::ifstream i(config_filename);
   nlohmann::json j;
   i >> j;
@@ -107,22 +91,20 @@ std::unique_ptr<DSP> get_dsp(const std::filesystem::path config_filename, dspDat
   returnedConfig.expected_sample_rate = nam::get_sample_rate_from_nam_file(j);
 
   /*Copy to a new dsp_config object for get_dsp below,
-   since not sure if weights actually get modified as being non-const references on some
-   model constructors inside get_dsp(dsp_config& conf).
-   We need to return unmodified version of dsp_config via returnedConfig.*/
+   since not sure if weights actually get modified as being non-const references
+   on some model constructors inside get_dsp(dsp_config& conf). We need to
+   return unmodified version of dsp_config via returnedConfig.*/
   dspData conf = returnedConfig;
 
   return get_dsp(conf);
 }
 
-struct OptionalValue
-{
+struct OptionalValue {
   bool have = false;
   double value = 0.0;
 };
 
-std::unique_ptr<DSP> get_dsp(dspData& conf)
-{
+std::unique_ptr<DSP> get_dsp(dspData& conf) {
   verify_config_version(conf.version);
 
   auto& architecture = conf.architecture;
@@ -131,18 +113,15 @@ std::unique_ptr<DSP> get_dsp(dspData& conf)
   OptionalValue loudness, inputLevel, outputLevel;
 
   auto AssignOptional = [&conf](const std::string key, OptionalValue& v) {
-    if (conf.metadata.find(key) != conf.metadata.end())
-    {
-      if (!conf.metadata[key].is_null())
-      {
+    if (conf.metadata.find(key) != conf.metadata.end()) {
+      if (!conf.metadata[key].is_null()) {
         v.value = conf.metadata[key];
         v.have = true;
       }
     }
   };
 
-  if (!conf.metadata.is_null())
-  {
+  if (!conf.metadata.is_null()) {
     AssignOptional("loudness", loudness);
     AssignOptional("input_level_dbu", inputLevel);
     AssignOptional("output_level_dbu", outputLevel);
@@ -151,17 +130,14 @@ std::unique_ptr<DSP> get_dsp(dspData& conf)
 
   // Initialize using registry-based factory
   std::unique_ptr<DSP> out =
-    nam::factory::FactoryRegistry::instance().create(architecture, config, weights, expectedSampleRate);
-  if (loudness.have)
-  {
+      nam::factory::FactoryRegistry::instance().create(architecture, config, weights, expectedSampleRate);
+  if (loudness.have) {
     out->SetLoudness(loudness.value);
   }
-  if (inputLevel.have)
-  {
+  if (inputLevel.have) {
     out->SetInputLevel(inputLevel.value);
   }
-  if (outputLevel.have)
-  {
+  if (outputLevel.have) {
     out->SetOutputLevel(outputLevel.value);
   }
 
@@ -172,12 +148,11 @@ std::unique_ptr<DSP> get_dsp(dspData& conf)
   return out;
 }
 
-double get_sample_rate_from_nam_file(const nlohmann::json& j)
-{
+double get_sample_rate_from_nam_file(const nlohmann::json& j) {
   if (j.find("sample_rate") != j.end())
     return j["sample_rate"];
   else
     return -1.0;
 }
 
-}; // namespace nam
+};  // namespace nam

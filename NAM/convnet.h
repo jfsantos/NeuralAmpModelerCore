@@ -1,5 +1,6 @@
 #pragma once
 
+#include <Eigen/Dense>
 #include <filesystem>
 #include <iterator>
 #include <memory>
@@ -7,26 +8,21 @@
 #include <unordered_map>
 #include <vector>
 
-#include <Eigen/Dense>
-
-namespace nam
-{
-namespace convnet
-{
+namespace nam {
+namespace convnet {
 // Custom Conv that avoids re-computing on pieces of the input and trusts
 // that the corresponding outputs are where they need to be.
 // Beware: this is clever!
 
 // Batch normalization
 // In prod mode, so really just an elementwise affine layer.
-class BatchNorm
-{
-public:
+class BatchNorm {
+ public:
   BatchNorm() {};
   BatchNorm(const int dim, std::vector<float>::iterator& weights);
   void process_(Eigen::MatrixXf& input, const long i_start, const long i_end) const;
 
-private:
+ private:
   // TODO simplify to just ax+b
   // y = (x-m)/sqrt(v+eps) * w + bias
   // y = ax+b
@@ -36,9 +32,8 @@ private:
   Eigen::VectorXf loc;
 };
 
-class ConvNetBlock
-{
-public:
+class ConvNetBlock {
+ public:
   ConvNetBlock() {};
   void set_weights_(const int in_channels, const int out_channels, const int _dilation, const bool batchnorm,
                     const std::string activation, std::vector<float>::iterator& weights);
@@ -46,34 +41,32 @@ public:
   long get_out_channels() const;
   Conv1D conv;
 
-private:
+ private:
   BatchNorm batchnorm;
   bool _batchnorm = false;
   activations::Activation* activation = nullptr;
 };
 
-class _Head
-{
-public:
+class _Head {
+ public:
   _Head() {};
   _Head(const int channels, std::vector<float>::iterator& weights);
   void process_(const Eigen::MatrixXf& input, Eigen::VectorXf& output, const long i_start, const long i_end) const;
 
-private:
+ private:
   Eigen::VectorXf _weight;
   float _bias = 0.0f;
 };
 
-class ConvNet : public Buffer
-{
-public:
+class ConvNet : public Buffer {
+ public:
   ConvNet(const int channels, const std::vector<int>& dilations, const bool batchnorm, const std::string activation,
           std::vector<float>& weights, const double expected_sample_rate = -1.0);
   ~ConvNet() = default;
 
   void process(NAM_SAMPLE* input, NAM_SAMPLE* output, const int num_frames) override;
 
-protected:
+ protected:
   std::vector<ConvNetBlock> _blocks;
   std::vector<Eigen::MatrixXf> _block_vals;
   Eigen::VectorXf _head_output;
@@ -83,13 +76,15 @@ protected:
   void _update_buffers_(NAM_SAMPLE* input, const int num_frames) override;
   void _rewind_buffers_() override;
 
-  int mPrewarmSamples = 0; // Pre-compute during initialization
-  int PrewarmSamples() override { return mPrewarmSamples; };
+  int mPrewarmSamples = 0;  // Pre-compute during initialization
+  int PrewarmSamples() override {
+    return mPrewarmSamples;
+  };
 };
 
 // Factory
 std::unique_ptr<DSP> Factory(const nlohmann::json& config, std::vector<float>& weights,
                              const double expectedSampleRate);
 
-}; // namespace convnet
-}; // namespace nam
+};  // namespace convnet
+};  // namespace nam
