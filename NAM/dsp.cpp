@@ -30,13 +30,14 @@ void nam::DSP::prewarm()
 {
   if (mMaxBufferSize == 0)
   {
-    SetMaxBufferSize(4096);
+    SetMaxBufferSize(64);
   }
   const int prewarmSamples = PrewarmSamples();
   if (prewarmSamples == 0)
     return;
 
   const size_t bufferSize = std::max(mMaxBufferSize, 1);
+
   // Allocate buffers for all channels
   std::vector<std::vector<NAM_SAMPLE>> inputBuffers(mInChannels);
   std::vector<std::vector<NAM_SAMPLE>> outputBuffers(mOutChannels);

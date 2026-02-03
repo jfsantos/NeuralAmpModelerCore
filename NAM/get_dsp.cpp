@@ -184,6 +184,11 @@ std::unique_ptr<DSP> get_dsp(dspData& conf)
   std::unique_ptr<DSP> out =
     nam::factory::FactoryRegistry::instance().create(architecture, config, weights, expectedSampleRate);
 
+  if (!out)
+  {
+    return nullptr;
+  }
+
   if (loudness.have)
   {
     out->SetLoudness(loudness.value);
