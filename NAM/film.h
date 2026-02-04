@@ -65,6 +65,19 @@ public:
     return _do_shift ? (_cond_to_scale_shift.get_out_channels() / 2) : _cond_to_scale_shift.get_out_channels();
   }
 
+  /// \brief Get the total number of weights in this module
+  /// \return Number of weight parameters
+  long get_num_weights() const { return _cond_to_scale_shift.get_num_weights(); }
+
+  /// \brief Copy weights to an external buffer
+  /// \param buffer Destination buffer
+  /// \param buffer_size Size of buffer in floats
+  /// \return Number of floats written, or 0 if buffer too small
+  size_t copy_weights_to_buffer(float* buffer, size_t buffer_size) const
+  {
+    return _cond_to_scale_shift.copy_weights_to_buffer(buffer, buffer_size);
+  }
+
   /// \brief Process input with conditioning
   ///
   /// Writes (input_dim x num_frames) into internal output buffer; access via GetOutput().
@@ -84,6 +97,63 @@ public:
     _cond_to_scale_shift.process_(condition, num_frames);
     const auto& scale_shift = _cond_to_scale_shift.GetOutput();
 
+#ifdef NAM_USE_INLINE_GEMM
+    // Optimized inline FiLM operation
+    const int input_dim = (int)get_input_dim();
+    const float* __restrict__ input_ptr = input.data();
+    const float* __restrict__ scale_shift_ptr = scale_shift.data();
+    float* __restrict__ output_ptr = _output.data();
+    const int scale_shift_rows = (int)scale_shift.rows();
+    const int input_rows = (int)input.rows();
+
+    if (_do_shift)
+    {
+      // scale = top input_dim rows, shift = bottom input_dim rows
+      for (int f = 0; f < num_frames; f++)
+      {
+        const float* __restrict__ in_col = input_ptr + f * input_rows;
+        const float* __restrict__ scale_col = scale_shift_ptr + f * scale_shift_rows;
+        const float* __restrict__ shift_col = scale_col + input_dim;
+        float* __restrict__ out_col = output_ptr + f * input_dim;
+
+        int i = 0;
+        for (; i + 3 < input_dim; i += 4)
+        {
+          out_col[i]     = in_col[i]     * scale_col[i]     + shift_col[i];
+          out_col[i + 1] = in_col[i + 1] * scale_col[i + 1] + shift_col[i + 1];
+          out_col[i + 2] = in_col[i + 2] * scale_col[i + 2] + shift_col[i + 2];
+          out_col[i + 3] = in_col[i + 3] * scale_col[i + 3] + shift_col[i + 3];
+        }
+        for (; i < input_dim; i++)
+        {
+          out_col[i] = in_col[i] * scale_col[i] + shift_col[i];
+        }
+      }
+    }
+    else
+    {
+      // scale only
+      for (int f = 0; f < num_frames; f++)
+      {
+        const float* __restrict__ in_col = input_ptr + f * input_rows;
+        const float* __restrict__ scale_col = scale_shift_ptr + f * scale_shift_rows;
+        float* __restrict__ out_col = output_ptr + f * input_dim;
+
+        int i = 0;
+        for (; i + 3 < input_dim; i += 4)
+        {
+          out_col[i]     = in_col[i]     * scale_col[i];
+          out_col[i + 1] = in_col[i + 1] * scale_col[i + 1];
+          out_col[i + 2] = in_col[i + 2] * scale_col[i + 2];
+          out_col[i + 3] = in_col[i + 3] * scale_col[i + 3];
+        }
+        for (; i < input_dim; i++)
+        {
+          out_col[i] = in_col[i] * scale_col[i];
+        }
+      }
+    }
+#else
     const auto scale = scale_shift.topRows(get_input_dim()).leftCols(num_frames);
     if (_do_shift)
     {
@@ -95,6 +165,7 @@ public:
     {
       _output.leftCols(num_frames).array() = input.leftCols(num_frames).array() * scale.array();
     }
+#endif
   }
 
   /// \brief Process input with conditioning (in-place)

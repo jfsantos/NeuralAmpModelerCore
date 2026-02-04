@@ -1,10 +1,12 @@
 #include <algorithm>
+#include <cstring>
 #include <iostream>
 #include <math.h>
 #include <sstream>
 
 #include <Eigen/Dense>
 
+#include "dtcm.h"
 #include "get_dsp.h"
 #include "registry.h"
 #include "wavenet.h"
@@ -123,8 +125,35 @@ void nam::wavenet::_Layer::Process(const Eigen::MatrixXf& input, const Eigen::Ma
     Eigen::MatrixXf& input_mixin_output = this->_input_mixin.GetOutput();
     this->_input_mixin_post_film->Process_(input_mixin_output, condition, num_frames);
   }
+
+#ifdef NAM_USE_INLINE_GEMM
+  // Optimized matrix addition for small channel counts
+  {
+    const int channels = (int)_conv.get_out_channels();
+    const float* __restrict__ conv_ptr = _conv.GetOutput().data();
+    const float* __restrict__ mixin_ptr = _input_mixin.GetOutput().data();
+    float* __restrict__ z_ptr = this->_z.data();
+    const int total = channels * num_frames;
+
+    // Unrolled addition
+    int i = 0;
+    for (; i + 3 < total; i += 4)
+    {
+      z_ptr[i] = conv_ptr[i] + mixin_ptr[i];
+      z_ptr[i + 1] = conv_ptr[i + 1] + mixin_ptr[i + 1];
+      z_ptr[i + 2] = conv_ptr[i + 2] + mixin_ptr[i + 2];
+      z_ptr[i + 3] = conv_ptr[i + 3] + mixin_ptr[i + 3];
+    }
+    for (; i < total; i++)
+    {
+      z_ptr[i] = conv_ptr[i] + mixin_ptr[i];
+    }
+  }
+#else
   this->_z.leftCols(num_frames).noalias() =
     _conv.GetOutput().leftCols(num_frames) + _input_mixin.GetOutput().leftCols(num_frames);
+#endif
+
   if (this->_activation_pre_film)
   {
     this->_activation_pre_film->Process_(this->_z, condition, num_frames);
@@ -207,28 +236,123 @@ void nam::wavenet::_Layer::Process(const Eigen::MatrixXf& input, const Eigen::Ma
       Eigen::MatrixXf& head1x1_output = this->_head1x1->GetOutput();
       this->_head1x1_post_film->Process_(head1x1_output, condition, num_frames);
     }
+#ifdef NAM_USE_INLINE_GEMM
+    {
+      const int channels = (int)this->_head1x1->get_out_channels();
+      const int total = channels * num_frames;
+      const float* __restrict__ src = this->_head1x1->GetOutput().data();
+      float* __restrict__ dst = this->_output_head.data();
+      int i = 0;
+      for (; i + 3 < total; i += 4)
+      {
+        dst[i] = src[i];
+        dst[i + 1] = src[i + 1];
+        dst[i + 2] = src[i + 2];
+        dst[i + 3] = src[i + 3];
+      }
+      for (; i < total; i++)
+        dst[i] = src[i];
+    }
+#else
     this->_output_head.leftCols(num_frames).noalias() = this->_head1x1->GetOutput().leftCols(num_frames);
+#endif
   }
   else // No head 1x1
   {
     // (No FiLM)
     // Store output to head (skip connection: activated conv output)
+#ifdef NAM_USE_INLINE_GEMM
+    if (this->_gating_mode == GatingMode::NONE)
+    {
+      // _z has bottleneck rows, data is contiguous
+      const int channels = (int)bottleneck;
+      const int total = channels * num_frames;
+      const float* __restrict__ src = this->_z.data();
+      float* __restrict__ dst = this->_output_head.data();
+      int i = 0;
+      for (; i + 3 < total; i += 4)
+      {
+        dst[i] = src[i];
+        dst[i + 1] = src[i + 1];
+        dst[i + 2] = src[i + 2];
+        dst[i + 3] = src[i + 3];
+      }
+      for (; i < total; i++)
+        dst[i] = src[i];
+    }
+    else
+    {
+      // _z has 2*bottleneck rows but we only want top bottleneck rows
+      // Column-major: need to copy column by column with stride
+      const int out_rows = (int)bottleneck;
+      const int z_rows = (int)this->_z.rows(); // 2*bottleneck for gated
+      const float* __restrict__ src = this->_z.data();
+      float* __restrict__ dst = this->_output_head.data();
+      for (int f = 0; f < num_frames; f++)
+      {
+        const float* __restrict__ src_col = src + f * z_rows;
+        float* __restrict__ dst_col = dst + f * out_rows;
+        for (int r = 0; r < out_rows; r++)
+          dst_col[r] = src_col[r];
+      }
+    }
+#else
     if (this->_gating_mode == GatingMode::NONE)
       this->_output_head.leftCols(num_frames).noalias() = this->_z.leftCols(num_frames);
     else
       this->_output_head.leftCols(num_frames).noalias() = this->_z.topRows(bottleneck).leftCols(num_frames);
+#endif
   }
 
   // Store output to next layer (residual connection: input + layer1x1 output, or just input if layer1x1 inactive)
   if (this->_layer1x1)
   {
+#ifdef NAM_USE_INLINE_GEMM
+    {
+      const int channels = (int)this->get_channels();
+      const int total = channels * num_frames;
+      const float* __restrict__ in_ptr = input.data();
+      const float* __restrict__ layer_ptr = this->_layer1x1->GetOutput().data();
+      float* __restrict__ dst = this->_output_next_layer.data();
+      int i = 0;
+      for (; i + 3 < total; i += 4)
+      {
+        dst[i] = in_ptr[i] + layer_ptr[i];
+        dst[i + 1] = in_ptr[i + 1] + layer_ptr[i + 1];
+        dst[i + 2] = in_ptr[i + 2] + layer_ptr[i + 2];
+        dst[i + 3] = in_ptr[i + 3] + layer_ptr[i + 3];
+      }
+      for (; i < total; i++)
+        dst[i] = in_ptr[i] + layer_ptr[i];
+    }
+#else
     this->_output_next_layer.leftCols(num_frames).noalias() =
       input.leftCols(num_frames) + this->_layer1x1->GetOutput().leftCols(num_frames);
+#endif
   }
   else
   {
     // If layer1x1 is inactive, residual connection is just the input (identity)
+#ifdef NAM_USE_INLINE_GEMM
+    {
+      const int channels = (int)this->get_channels();
+      const int total = channels * num_frames;
+      const float* __restrict__ src = input.data();
+      float* __restrict__ dst = this->_output_next_layer.data();
+      int i = 0;
+      for (; i + 3 < total; i += 4)
+      {
+        dst[i] = src[i];
+        dst[i + 1] = src[i + 1];
+        dst[i + 2] = src[i + 2];
+        dst[i + 3] = src[i + 3];
+      }
+      for (; i < total; i++)
+        dst[i] = src[i];
+    }
+#else
     this->_output_next_layer.leftCols(num_frames).noalias() = input.leftCols(num_frames);
+#endif
   }
 }
 
@@ -291,7 +415,26 @@ void nam::wavenet::_LayerArray::Process(const Eigen::MatrixXf& layer_inputs, con
                                         const Eigen::MatrixXf& head_inputs, const int num_frames)
 {
   // Copy head inputs from previous layer array
+#ifdef NAM_USE_INLINE_GEMM
+  {
+    const int channels = (int)this->_head_output_size;
+    const int total = channels * num_frames;
+    const float* __restrict__ src = head_inputs.data();
+    float* __restrict__ dst = this->_head_inputs.data();
+    int i = 0;
+    for (; i + 3 < total; i += 4)
+    {
+      dst[i] = src[i];
+      dst[i + 1] = src[i + 1];
+      dst[i + 2] = src[i + 2];
+      dst[i + 3] = src[i + 3];
+    }
+    for (; i < total; i++)
+      dst[i] = src[i];
+  }
+#else
   this->_head_inputs.leftCols(num_frames).noalias() = head_inputs.leftCols(num_frames);
+#endif
   ProcessInner(layer_inputs, condition, num_frames);
 }
 
@@ -320,13 +463,51 @@ void nam::wavenet::_LayerArray::ProcessInner(const Eigen::MatrixXf& layer_inputs
     }
 
     // Accumulate head output from this layer
+#ifdef NAM_USE_INLINE_GEMM
+    {
+      const int channels = (int)this->_head_output_size;
+      const int total = channels * num_frames;
+      const float* __restrict__ src = this->_layers[i].GetOutputHead().data();
+      float* __restrict__ dst = this->_head_inputs.data();
+      int j = 0;
+      for (; j + 3 < total; j += 4)
+      {
+        dst[j] += src[j];
+        dst[j + 1] += src[j + 1];
+        dst[j + 2] += src[j + 2];
+        dst[j + 3] += src[j + 3];
+      }
+      for (; j < total; j++)
+        dst[j] += src[j];
+    }
+#else
     this->_head_inputs.leftCols(num_frames).noalias() += this->_layers[i].GetOutputHead().leftCols(num_frames);
+#endif
   }
 
   // Store output from last layer
   const size_t last_layer = this->_layers.size() - 1;
+#ifdef NAM_USE_INLINE_GEMM
+  {
+    const int channels = (int)this->_get_channels();
+    const int total = channels * num_frames;
+    const float* __restrict__ src = this->_layers[last_layer].GetOutputNextLayer().data();
+    float* __restrict__ dst = this->_layer_outputs.data();
+    int i = 0;
+    for (; i + 3 < total; i += 4)
+    {
+      dst[i] = src[i];
+      dst[i + 1] = src[i + 1];
+      dst[i + 2] = src[i + 2];
+      dst[i + 3] = src[i + 3];
+    }
+    for (; i < total; i++)
+      dst[i] = src[i];
+  }
+#else
   this->_layer_outputs.leftCols(num_frames).noalias() =
     this->_layers[last_layer].GetOutputNextLayer().leftCols(num_frames);
+#endif
 
   // Process head rechannel
   _head_rechannel.process_(this->_head_inputs, num_frames);
@@ -832,6 +1013,255 @@ std::unique_ptr<nam::DSP> nam::wavenet::Factory(const nlohmann::json& config, st
   // out_channels is determined from last layer array's head_size
   return std::make_unique<nam::wavenet::WaveNet>(
     in_channels, layer_array_params, head_scale, with_head, weights, std::move(condition_dsp), expectedSampleRate);
+}
+
+// Weight counting and copying for DTCM support ===============================
+
+size_t nam::wavenet::_Layer::get_weight_count() const
+{
+  size_t count = 0;
+
+  // Dilated convolution
+  count += this->_conv.get_num_weights();
+
+  // Input mixin
+  count += this->_input_mixin.get_num_weights();
+
+  // Optional layer1x1
+  if (this->_layer1x1)
+    count += this->_layer1x1->get_num_weights();
+
+  // Optional head1x1
+  if (this->_head1x1)
+    count += this->_head1x1->get_num_weights();
+
+  // FiLM objects
+  if (this->_conv_pre_film)
+    count += this->_conv_pre_film->get_num_weights();
+  if (this->_conv_post_film)
+    count += this->_conv_post_film->get_num_weights();
+  if (this->_input_mixin_pre_film)
+    count += this->_input_mixin_pre_film->get_num_weights();
+  if (this->_input_mixin_post_film)
+    count += this->_input_mixin_post_film->get_num_weights();
+  if (this->_activation_pre_film)
+    count += this->_activation_pre_film->get_num_weights();
+  if (this->_activation_post_film)
+    count += this->_activation_post_film->get_num_weights();
+  if (this->_layer1x1_post_film)
+    count += this->_layer1x1_post_film->get_num_weights();
+  if (this->_head1x1_post_film)
+    count += this->_head1x1_post_film->get_num_weights();
+
+  return count;
+}
+
+size_t nam::wavenet::_Layer::copy_weights_to_buffer(float* buffer, size_t buffer_size) const
+{
+  size_t total = get_weight_count();
+  if (total > buffer_size)
+    return 0;
+
+  size_t offset = 0;
+  size_t written = 0;
+
+  // Dilated convolution
+  written = this->_conv.copy_weights_to_buffer(buffer + offset, buffer_size - offset);
+  if (written == 0 && this->_conv.get_num_weights() > 0)
+    return 0;
+  offset += written;
+
+  // Input mixin
+  written = this->_input_mixin.copy_weights_to_buffer(buffer + offset, buffer_size - offset);
+  if (written == 0 && this->_input_mixin.get_num_weights() > 0)
+    return 0;
+  offset += written;
+
+  // Optional layer1x1
+  if (this->_layer1x1)
+  {
+    written = this->_layer1x1->copy_weights_to_buffer(buffer + offset, buffer_size - offset);
+    if (written == 0 && this->_layer1x1->get_num_weights() > 0)
+      return 0;
+    offset += written;
+  }
+
+  // Optional head1x1
+  if (this->_head1x1)
+  {
+    written = this->_head1x1->copy_weights_to_buffer(buffer + offset, buffer_size - offset);
+    if (written == 0 && this->_head1x1->get_num_weights() > 0)
+      return 0;
+    offset += written;
+  }
+
+  // FiLM objects
+  if (this->_conv_pre_film)
+  {
+    written = this->_conv_pre_film->copy_weights_to_buffer(buffer + offset, buffer_size - offset);
+    if (written == 0)
+      return 0;
+    offset += written;
+  }
+  if (this->_conv_post_film)
+  {
+    written = this->_conv_post_film->copy_weights_to_buffer(buffer + offset, buffer_size - offset);
+    if (written == 0)
+      return 0;
+    offset += written;
+  }
+  if (this->_input_mixin_pre_film)
+  {
+    written = this->_input_mixin_pre_film->copy_weights_to_buffer(buffer + offset, buffer_size - offset);
+    if (written == 0)
+      return 0;
+    offset += written;
+  }
+  if (this->_input_mixin_post_film)
+  {
+    written = this->_input_mixin_post_film->copy_weights_to_buffer(buffer + offset, buffer_size - offset);
+    if (written == 0)
+      return 0;
+    offset += written;
+  }
+  if (this->_activation_pre_film)
+  {
+    written = this->_activation_pre_film->copy_weights_to_buffer(buffer + offset, buffer_size - offset);
+    if (written == 0)
+      return 0;
+    offset += written;
+  }
+  if (this->_activation_post_film)
+  {
+    written = this->_activation_post_film->copy_weights_to_buffer(buffer + offset, buffer_size - offset);
+    if (written == 0)
+      return 0;
+    offset += written;
+  }
+  if (this->_layer1x1_post_film)
+  {
+    written = this->_layer1x1_post_film->copy_weights_to_buffer(buffer + offset, buffer_size - offset);
+    if (written == 0)
+      return 0;
+    offset += written;
+  }
+  if (this->_head1x1_post_film)
+  {
+    written = this->_head1x1_post_film->copy_weights_to_buffer(buffer + offset, buffer_size - offset);
+    if (written == 0)
+      return 0;
+    offset += written;
+  }
+
+  return offset;
+}
+
+size_t nam::wavenet::_LayerArray::get_weight_count() const
+{
+  size_t count = 0;
+
+  // Rechannel
+  count += this->_rechannel.get_num_weights();
+
+  // Layers
+  for (const auto& layer : this->_layers)
+    count += layer.get_weight_count();
+
+  // Head rechannel
+  count += this->_head_rechannel.get_num_weights();
+
+  return count;
+}
+
+size_t nam::wavenet::_LayerArray::copy_weights_to_buffer(float* buffer, size_t buffer_size) const
+{
+  size_t total = get_weight_count();
+  if (total > buffer_size)
+    return 0;
+
+  size_t offset = 0;
+  size_t written = 0;
+
+  // Rechannel
+  written = this->_rechannel.copy_weights_to_buffer(buffer + offset, buffer_size - offset);
+  if (written == 0 && this->_rechannel.get_num_weights() > 0)
+    return 0;
+  offset += written;
+
+  // Layers
+  for (const auto& layer : this->_layers)
+  {
+    written = layer.copy_weights_to_buffer(buffer + offset, buffer_size - offset);
+    if (written == 0 && layer.get_weight_count() > 0)
+      return 0;
+    offset += written;
+  }
+
+  // Head rechannel
+  written = this->_head_rechannel.copy_weights_to_buffer(buffer + offset, buffer_size - offset);
+  if (written == 0 && this->_head_rechannel.get_num_weights() > 0)
+    return 0;
+  offset += written;
+
+  return offset;
+}
+
+size_t nam::wavenet::WaveNet::get_total_weight_count() const
+{
+  size_t count = 0;
+
+  // Condition DSP (if present)
+  if (this->_condition_dsp)
+    count += this->_condition_dsp->get_total_weight_count();
+
+  // Layer arrays
+  for (const auto& layer_array : this->_layer_arrays)
+    count += layer_array.get_weight_count();
+
+  // Head scale (1 float)
+  count += 1;
+
+  return count;
+}
+
+bool nam::wavenet::WaveNet::copy_weights_to_dtcm()
+{
+  // Reset the allocator before copying new weights
+  dtcm::reset_weight_allocator();
+
+  size_t total_weights = get_total_weight_count();
+  size_t available = dtcm::get_weights_available();
+
+  if (total_weights > available)
+    return false;
+
+  // Allocate space for all weights
+  float* buffer = dtcm::allocate_weights(total_weights);
+  if (buffer == nullptr)
+    return false;
+
+  size_t offset = 0;
+
+  // Copy condition DSP weights (if present)
+  if (this->_condition_dsp)
+  {
+    // For now, condition DSP doesn't have copy_weights_to_buffer
+    // This is a limitation - condition DSP weights stay in regular memory
+  }
+
+  // Copy layer array weights
+  for (const auto& layer_array : this->_layer_arrays)
+  {
+    size_t written = layer_array.copy_weights_to_buffer(buffer + offset, total_weights - offset);
+    if (written == 0 && layer_array.get_weight_count() > 0)
+      return false;
+    offset += written;
+  }
+
+  // Copy head scale
+  buffer[offset++] = this->_head_scale;
+
+  return true;
 }
 
 // Register the factory

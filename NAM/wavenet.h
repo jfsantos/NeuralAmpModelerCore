@@ -376,6 +376,16 @@ public:
   /// \return Const reference to the internal Conv1D object
   const Conv1D& get_conv() const { return _conv; }
 
+  /// \brief Get total weight count for this layer
+  /// \return Total number of float weights
+  size_t get_weight_count() const;
+
+  /// \brief Copy weights to buffer
+  /// \param buffer Destination buffer
+  /// \param buffer_size Size of buffer in floats
+  /// \return Number of floats written, or 0 if buffer too small
+  size_t copy_weights_to_buffer(float* buffer, size_t buffer_size) const;
+
 private:
   // The dilated convolution at the front of the block
   Conv1D _conv;
@@ -385,11 +395,9 @@ private:
   std::unique_ptr<Conv1x1> _layer1x1;
   // The post-activation 1x1 convolution outputting to the head, optional
   std::unique_ptr<Conv1x1> _head1x1;
-  // The internal state
+
   Eigen::MatrixXf _z;
-  // Output to next layer (residual connection: input + layer1x1 output, or just input if layer1x1 inactive)
   Eigen::MatrixXf _output_next_layer;
-  // Output to head (skip connection: activated conv output)
   Eigen::MatrixXf _output_head;
 
   activations::Activation::Ptr _activation;
@@ -593,6 +601,16 @@ public:
   /// \param it Iterator to the weights vector. Will be advanced as weights are consumed.
   void set_weights_(std::vector<float>::iterator& it);
 
+  /// \brief Get total weight count for this layer array
+  /// \return Total number of float weights
+  size_t get_weight_count() const;
+
+  /// \brief Copy weights to buffer
+  /// \param buffer Destination buffer
+  /// \param buffer_size Size of buffer in floats
+  /// \return Number of floats written, or 0 if buffer too small
+  size_t copy_weights_to_buffer(float* buffer, size_t buffer_size) const;
+
   /// \brief Get the "zero-indexed" receptive field
   ///
   /// The receptive field is the number of input samples that affect the output.
@@ -606,12 +624,12 @@ private:
 
   // The layer objects
   std::vector<_Layer> _layers;
-  // Output from last layer (for next layer array)
+
   Eigen::MatrixXf _layer_outputs;
-  // Accumulated head inputs from all layers
-  // Size is _head_output_size (= head1x1.out_channels if head1x1 active, else bottleneck)
   Eigen::MatrixXf _head_inputs;
 
+  // Accumulated head inputs from all layers
+  // Size is _head_output_size (= head1x1.out_channels if head1x1 active, else bottleneck)
   // Rechannel for the head (_head_output_size -> head_size)
   Conv1x1 _head_rechannel;
 
@@ -669,10 +687,18 @@ public:
   /// \param weights Iterator to the weights vector. Will be advanced as weights are consumed.
   void set_weights_(std::vector<float>::iterator& weights);
 
+  /// \brief Copy all model weights to DTCM buffer for faster access
+  /// \return true if successful, false if buffer too small
+  bool copy_weights_to_dtcm() override;
+
+  /// \brief Get total weight count for this model
+  /// \return Total number of float weights
+  size_t get_total_weight_count() const override;
+
 protected:
-  // Element-wise arrays:
   Eigen::MatrixXf _condition_input;
   Eigen::MatrixXf _condition_output;
+
   std::unique_ptr<DSP> _condition_dsp;
   // Temporary buffers for condition DSP processing (to avoid allocations in _process_condition)
   std::vector<std::vector<NAM_SAMPLE>> _condition_dsp_input_buffers;

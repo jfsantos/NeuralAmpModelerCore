@@ -154,6 +154,23 @@ public:
   /// \param outputLevel Output level in dBu
   void SetOutputLevel(const double outputLevel);
 
+  /// \brief Copy all model weights to DTCM buffer for faster access
+  ///
+  /// This copies weights from heap-allocated Eigen matrices to a static DTCM buffer
+  /// on ARM Cortex-M7 platforms. On other platforms, weights are copied to a regular
+  /// static buffer (which still improves locality but without DTCM benefits).
+  ///
+  /// \return true if successful, false if buffer too small for this model's weights
+  virtual bool copy_weights_to_dtcm() { return true; }
+
+  /// \brief Get total weight count for this model
+  ///
+  /// Returns the total number of float weights that would be copied by copy_weights_to_dtcm().
+  /// Used to check if the model fits in DTCM before attempting to copy.
+  ///
+  /// \return Total number of float weights
+  virtual size_t get_total_weight_count() const { return 0; }
+
 protected:
   friend class wavenet::WaveNet; // Allow WaveNet to access protected members. Used in condition DSP.
 
@@ -325,6 +342,20 @@ public:
 
   long get_out_channels() const;
   long get_in_channels() const;
+
+  /// \brief Get the total number of weights in this layer
+  /// \return Number of weight parameters
+  long get_num_weights() const;
+
+  /// \brief Copy weights to an external buffer
+  ///
+  /// Copies all weights (weight matrix and bias) to the provided buffer.
+  /// This is used to copy weights to DTCM for faster access on ARM Cortex-M7.
+  ///
+  /// \param buffer Destination buffer
+  /// \param buffer_size Size of buffer in floats
+  /// \return Number of floats written, or 0 if buffer too small
+  size_t copy_weights_to_buffer(float* buffer, size_t buffer_size) const;
 
 protected:
   // Non-depthwise: full weight matrix (out_channels x in_channels)

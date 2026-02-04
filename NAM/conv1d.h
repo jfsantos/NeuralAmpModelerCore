@@ -4,6 +4,18 @@
 #include <vector>
 #include "ring_buffer.h"
 
+// CMSIS-DSP support for ARM Cortex-M processors
+// Auto-enabled on ARM Cortex-M platforms, but can be disabled with NAM_DISABLE_CMSIS_DSP
+#if (defined(ARM_MATH_CM7) || defined(ARM_MATH_CM4) || defined(ARM_MATH_CM33)) && !defined(NAM_DISABLE_CMSIS_DSP)
+  #ifndef NAM_USE_CMSIS_DSP
+    #define NAM_USE_CMSIS_DSP 1
+  #endif
+#endif
+
+#ifdef NAM_USE_CMSIS_DSP
+  #include "arm_math.h"
+#endif
+
 namespace nam
 {
 /// \brief 1D dilated convolution layer
@@ -117,6 +129,16 @@ public:
   /// \return true if bias is present, false otherwise
   bool has_bias() const { return this->_bias.size() > 0; };
 
+  /// \brief Copy weights to an external buffer
+  ///
+  /// Copies all weights (kernel weights and bias) to the provided buffer.
+  /// This is used to copy weights to DTCM for faster access on ARM Cortex-M7.
+  ///
+  /// \param buffer Destination buffer
+  /// \param buffer_size Size of buffer in floats
+  /// \return Number of floats written, or 0 if buffer too small
+  size_t copy_weights_to_buffer(float* buffer, size_t buffer_size) const;
+
 protected:
   // conv[kernel](cout, cin) - used for non-depthwise convolutions
   std::vector<Eigen::MatrixXf> _weight;
@@ -132,6 +154,9 @@ protected:
 private:
   RingBuffer _input_buffer; // Ring buffer for input (channels x buffer_size)
   Eigen::MatrixXf _output; // Pre-allocated output buffer (out_channels x maxBufferSize)
+#ifdef NAM_USE_CMSIS_DSP
+  Eigen::MatrixXf _cmsis_temp;
+#endif
   int _max_buffer_size = 0; // Stored maxBufferSize
 };
 } // namespace nam

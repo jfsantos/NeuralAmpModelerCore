@@ -9,6 +9,17 @@ DAISYSP_DIR = ../../../DaisySP
 # Enable FatFS for SD card access
 USE_FATFS = 1
 
+# Optimization flags for ARM Cortex-M7
+# Override the default -O2 with more aggressive optimizations
+OPT = -O3
+
+# Additional optimization flags (appended after core Makefile is included)
+# -ffast-math: Allow aggressive FP optimizations (safe for audio DSP)
+# -funroll-loops: Unroll small loops for better pipelining
+# -ftree-vectorize: Enable auto-vectorization (implicit with -O3 but explicit)
+# -fmove-loop-invariants: Re-enable loop invariant motion (disabled by libDaisy core)
+NAM_OPT_FLAGS = -ffast-math -funroll-loops -ftree-vectorize -fmove-loop-invariants
+
 # Sources - Main application and FatFS loader
 CPP_SOURCES = \
 	NAMDaisy.cpp \
@@ -20,11 +31,20 @@ CPP_SOURCES += \
 	../NAM/conv1d.cpp \
 	../NAM/convnet.cpp \
 	../NAM/dsp.cpp \
+	../NAM/dtcm.cpp \
 	../NAM/get_dsp.cpp \
 	../NAM/lstm.cpp \
 	../NAM/ring_buffer.cpp \
 	../NAM/util.cpp \
 	../NAM/wavenet.cpp
+
+# CMSIS-DSP sources for optimized matrix operations on ARM Cortex-M
+# These provide hardware-optimized implementations of matrix multiply and vector add
+CMSIS_DSP_DIR = $(LIBDAISY_DIR)/Drivers/CMSIS/DSP/Source
+C_SOURCES += \
+	$(CMSIS_DSP_DIR)/MatrixFunctions/arm_mat_mult_f32.c \
+	$(CMSIS_DSP_DIR)/MatrixFunctions/arm_mat_init_f32.c \
+	$(CMSIS_DSP_DIR)/BasicMathFunctions/arm_add_f32.c
 
 # Include paths
 # Note: NAM headers use #include "json.hpp" so we need nlohmann in the path
@@ -37,6 +57,20 @@ C_INCLUDES += \
 # Use float samples (saves memory compared to double)
 C_DEFS += -DNAM_SAMPLE_FLOAT
 
+# ARM Cortex-M7 architecture flag
+C_DEFS += -D__ARM_ARCH_7EM__
+
+# Matrix multiplication optimization options (uncomment ONE):
+# Option 1: CMSIS-DSP (auto-enabled on ARM, uses arm_mat_mult_f32)
+# Option 2: Inline GEMM (hand-written fused multiply-accumulate)
+# Option 3: Eigen fallback (disable both for default Eigen behavior)
+#
+# Uncomment to use inline GEMM instead of CMSIS-DSP:
+C_DEFS += -DNAM_DISABLE_CMSIS_DSP -DNAM_USE_INLINE_GEMM
+#
+# Uncomment to use pure Eigen (disable all optimizations):
+# C_DEFS += -DNAM_DISABLE_CMSIS_DSP
+
 # Use C++17 for std::optional support
 CPP_STANDARD = -std=gnu++17
 
@@ -44,11 +78,16 @@ APP_TYPE = BOOT_QSPI
 
 # Core location and generic Makefile
 SYSTEM_FILES_DIR = $(LIBDAISY_DIR)/core
+
 include $(SYSTEM_FILES_DIR)/Makefile
 
 # Enable C++ exceptions AFTER include (core Makefile sets -fno-exceptions)
 # NAM library uses std::runtime_error for error handling
 CPPFLAGS += -fexceptions
+
+# Apply NAM optimization flags
+CPPFLAGS += $(NAM_OPT_FLAGS)
+CFLAGS += $(NAM_OPT_FLAGS)
 
 # Custom clean targets
 # clean-local: Only clean project files (fast rebuild)
