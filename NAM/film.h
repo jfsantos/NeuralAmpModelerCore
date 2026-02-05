@@ -78,6 +78,14 @@ public:
     return _cond_to_scale_shift.copy_weights_to_buffer(buffer, buffer_size);
   }
 
+  /// \brief Use weights from an external buffer (e.g., DTCM)
+  ///
+  /// After calling copy_weights_to_buffer(), call this method with the same buffer
+  /// to make the convolution use weights directly from the external buffer.
+  ///
+  /// \param buffer Pointer to external weight buffer (must remain valid)
+  void use_external_weights(float* buffer) { _cond_to_scale_shift.use_external_weights(buffer); }
+
   /// \brief Process input with conditioning
   ///
   /// Writes (input_dim x num_frames) into internal output buffer; access via GetOutput().
@@ -94,8 +102,12 @@ public:
     assert(num_frames <= condition.cols());
     assert(num_frames <= _output.cols());
 
+    // Conv1x1 to compute scale/shift from condition
     _cond_to_scale_shift.process_(condition, num_frames);
     const auto& scale_shift = _cond_to_scale_shift.GetOutput();
+
+    // Note: FiLM time is included in the caller's profiling category (e.g., conv1d, input_mixin)
+    // rather than tracked separately, to avoid double-counting.
 
 #ifdef NAM_USE_INLINE_GEMM
     // Optimized inline FiLM operation

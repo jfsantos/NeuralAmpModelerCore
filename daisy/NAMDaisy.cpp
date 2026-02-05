@@ -17,6 +17,7 @@
 #include "NAM/dsp.h"
 #include "NAM/dtcm.h"
 #include "NAM/activations.h"
+#include "NAM/profiling.h"
 #include "get_dsp_fatfs.h"
 
 using namespace daisy;
@@ -42,6 +43,18 @@ static NAM_SAMPLE inputBuffer[AUDIO_BUFFER_SIZE];
 static NAM_SAMPLE outputBuffer[AUDIO_BUFFER_SIZE];
 static NAM_SAMPLE* inputPtr = inputBuffer;
 static NAM_SAMPLE* outputPtr = outputBuffer;
+
+// Simple pseudo-random number generator for test signal
+static uint32_t s_rng_state = 12345;
+static float NextRandom()
+{
+  // xorshift32
+  s_rng_state ^= s_rng_state << 13;
+  s_rng_state ^= s_rng_state >> 17;
+  s_rng_state ^= s_rng_state << 5;
+  // Convert to float in range [-0.5, 0.5] (typical guitar signal level)
+  return ((float)(s_rng_state & 0xFFFFFF) / (float)0xFFFFFF) - 0.5f;
+}
 
 // USB serial output helper
 static char printBuffer[256];
@@ -97,28 +110,65 @@ void RunBenchmark(std::unique_ptr<nam::DSP>& model, const char* filename)
   // Reset the model with our sample rate and buffer size
   model->Reset(SAMPLE_RATE, AUDIO_BUFFER_SIZE);
 
-  // Clear input buffer (silence)
-  for (size_t i = 0; i < AUDIO_BUFFER_SIZE; i++)
+  // Warm up the model with realistic signal (not silence)
+  s_rng_state = 12345; // Reset RNG for reproducibility
+  for (size_t i = 0; i < 100; i++)
   {
-    inputBuffer[i] = 0.0f;
-  }
-
-  // Warm up the model
-  for (size_t i = 0; i < 10; i++)
-  {
+    // Generate noise input each warmup iteration
+    for (size_t j = 0; j < AUDIO_BUFFER_SIZE; j++)
+    {
+      inputBuffer[j] = NextRandom();
+    }
     model->process(&inputPtr, &outputPtr, AUDIO_BUFFER_SIZE);
   }
 
-  // Run the benchmark
-  uint32_t startTime = System::GetUs();
+  // Reset profiling counters
+#ifdef NAM_PROFILING
+  nam::profiling::g_timings.reset();
+#endif
 
-  for (size_t i = 0; i < NUM_BENCHMARK_BUFFERS; i++)
+  // Run benchmark multiple times to measure variance
+  static constexpr int NUM_RUNS = 3;
+  uint32_t runTimes[NUM_RUNS];
+  uint32_t minTime = UINT32_MAX;
+  uint32_t maxTime = 0;
+  uint32_t totalTime = 0;
+
+  for (int run = 0; run < NUM_RUNS; run++)
   {
-    model->process(&inputPtr, &outputPtr, AUDIO_BUFFER_SIZE);
+    // Reset RNG state for each run to ensure same input sequence
+    s_rng_state = 67890 + run * 11111;
+
+#ifdef NAM_PROFILING
+    // Only collect profiling on last run
+    if (run == NUM_RUNS - 1)
+      nam::profiling::g_timings.reset();
+#endif
+
+    uint32_t startTime = System::GetUs();
+
+    for (size_t i = 0; i < NUM_BENCHMARK_BUFFERS; i++)
+    {
+      // Generate realistic input signal each buffer (noise simulates guitar signal)
+      for (size_t j = 0; j < AUDIO_BUFFER_SIZE; j++)
+      {
+        inputBuffer[j] = NextRandom();
+      }
+      model->process(&inputPtr, &outputPtr, AUDIO_BUFFER_SIZE);
+    }
+
+    uint32_t endTime = System::GetUs();
+    runTimes[run] = endTime - startTime;
+
+    if (runTimes[run] < minTime)
+      minTime = runTimes[run];
+    if (runTimes[run] > maxTime)
+      maxTime = runTimes[run];
+    totalTime += runTimes[run];
   }
 
-  uint32_t endTime = System::GetUs();
-  uint32_t benchmarkTimeUs = endTime - startTime;
+  // Use minimum time (best case, least interference from system)
+  uint32_t benchmarkTimeUs = minTime;
 
   // Calculate and print results
   // Note: nano specs doesn't support %f, so we use integer math
@@ -130,9 +180,51 @@ void RunBenchmark(std::unique_ptr<nam::DSP>& model, const char* filename)
   // Real-time factor as percentage (100 = 1.0x, 200 = 2.0x, etc.)
   uint32_t realTimePercent = (audioTimeMs * 100) / totalTimeMs;
 
-  Printf("  Time: %lu.%02lu ms | Audio: %lu ms | RT: %lu.%02lux | %s", (unsigned long)totalTimeMs,
+  // Variance info
+  uint32_t varianceMs = (maxTime - minTime) / 1000;
+
+  Printf("  Best: %lu.%02lu ms | Audio: %lu ms | RT: %lu.%02lux | Var: %lu ms | %s", (unsigned long)totalTimeMs,
          (unsigned long)totalTimeFrac, (unsigned long)audioTimeMs, (unsigned long)(realTimePercent / 100),
-         (unsigned long)(realTimePercent % 100), realTimePercent >= 100 ? "OK" : "SLOW");
+         (unsigned long)(realTimePercent % 100), (unsigned long)varianceMs, realTimePercent >= 100 ? "OK" : "SLOW");
+
+#ifdef NAM_PROFILING
+  // Print profiling breakdown
+  PrintLine("  [Profiling enabled]");
+  const auto& t = nam::profiling::g_timings;
+  uint32_t profTotal = t.total();
+  Printf("  Profiling total: %lu us", (unsigned long)profTotal);
+  if (profTotal > 0)
+  {
+    // Convert to milliseconds and calculate percentages
+    Printf("  Profiling breakdown (ms / %%):");
+    Printf("    Conv1D:     %lu (%lu%%)", (unsigned long)(t.conv1d / 1000), (unsigned long)(t.conv1d * 100 / profTotal));
+    Printf("    InputMixin: %lu (%lu%%)", (unsigned long)(t.input_mixin / 1000),
+           (unsigned long)(t.input_mixin * 100 / profTotal));
+    Printf("    Layer1x1:   %lu (%lu%%)", (unsigned long)(t.layer1x1 / 1000),
+           (unsigned long)(t.layer1x1 * 100 / profTotal));
+    Printf("    Head1x1:    %lu (%lu%%)", (unsigned long)(t.head1x1 / 1000),
+           (unsigned long)(t.head1x1 * 100 / profTotal));
+    Printf("    Rechannel:  %lu (%lu%%)", (unsigned long)(t.rechannel / 1000),
+           (unsigned long)(t.rechannel * 100 / profTotal));
+    Printf("    Conv1x1:    %lu (%lu%%)", (unsigned long)(t.conv1x1 / 1000),
+           (unsigned long)(t.conv1x1 * 100 / profTotal));
+    Printf("    Activation: %lu (%lu%%)", (unsigned long)(t.activation / 1000),
+           (unsigned long)(t.activation * 100 / profTotal));
+    Printf("    FiLM:       %lu (%lu%%)", (unsigned long)(t.film / 1000),
+           (unsigned long)(t.film * 100 / profTotal));
+    Printf("    Copies:     %lu (%lu%%)", (unsigned long)(t.copies / 1000),
+           (unsigned long)(t.copies * 100 / profTotal));
+    Printf("    SetZero:    %lu (%lu%%)", (unsigned long)(t.setzero / 1000),
+           (unsigned long)(t.setzero * 100 / profTotal));
+    Printf("    RingBuf:    %lu (%lu%%)", (unsigned long)(t.ringbuf / 1000),
+           (unsigned long)(t.ringbuf * 100 / profTotal));
+    Printf("    Condition:  %lu (%lu%%)", (unsigned long)(t.condition / 1000),
+           (unsigned long)(t.condition * 100 / profTotal));
+    Printf("    Other:      %lu (%lu%%)", (unsigned long)(t.other / 1000),
+           (unsigned long)(t.other * 100 / profTotal));
+    Printf("    Total prof: %lu ms", (unsigned long)(profTotal / 1000));
+  }
+#endif
 }
 
 // Check if filename ends with .nam (case insensitive)

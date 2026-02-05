@@ -5,6 +5,7 @@
 
 #include "NAM/dsp.h"
 #include "NAM/get_dsp.h"
+#include "NAM/profiling.h"
 
 using std::chrono::duration;
 using std::chrono::duration_cast;
@@ -73,6 +74,9 @@ int main(int argc, char* argv[])
     model->process(inputPtrs.data(), outputPtrs.data(), bufferSize);
   }
 
+  // Reset profiling counters before timed runs
+  nam::profiling::reset();
+
   // Timed runs
   double totalMicroseconds = 0.0;
   for (int iter = 0; iter < numIterations; iter++)
@@ -91,6 +95,9 @@ int main(int argc, char* argv[])
 
   // Output format: buffer_size,avg_microseconds
   std::cout << bufferSize << "," << avgMicroseconds << std::endl;
+
+  // Print profiling breakdown if enabled
+  nam::profiling::print_results();
 
   return 0;
 }

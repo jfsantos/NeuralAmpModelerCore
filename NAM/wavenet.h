@@ -386,6 +386,15 @@ public:
   /// \return Number of floats written, or 0 if buffer too small
   size_t copy_weights_to_buffer(float* buffer, size_t buffer_size) const;
 
+  /// \brief Use weights from an external buffer (e.g., DTCM)
+  ///
+  /// After calling copy_weights_to_buffer(), call this method with the same buffer
+  /// to make all convolutions in this layer use weights directly from the external buffer.
+  ///
+  /// \param buffer Pointer to external weight buffer (must remain valid)
+  /// \return Number of floats consumed from buffer
+  size_t use_external_weights(float* buffer);
+
 private:
   // The dilated convolution at the front of the block
   Conv1D _conv;
@@ -610,6 +619,15 @@ public:
   /// \param buffer_size Size of buffer in floats
   /// \return Number of floats written, or 0 if buffer too small
   size_t copy_weights_to_buffer(float* buffer, size_t buffer_size) const;
+
+  /// \brief Use weights from an external buffer (e.g., DTCM)
+  ///
+  /// After calling copy_weights_to_buffer(), call this method with the same buffer
+  /// to make all convolutions in this layer array use weights directly from the external buffer.
+  ///
+  /// \param buffer Pointer to external weight buffer (must remain valid)
+  /// \return Number of floats consumed from buffer
+  size_t use_external_weights(float* buffer);
 
   /// \brief Get the "zero-indexed" receptive field
   ///

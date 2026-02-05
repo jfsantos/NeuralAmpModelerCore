@@ -9,6 +9,7 @@
 #include <unordered_set>
 
 #include "dsp.h"
+#include "profiling.h"
 #include "registry.h"
 
 #define tanh_impl_ std::tanh
@@ -445,13 +446,24 @@ Eigen::MatrixXf nam::Conv1x1::process(const Eigen::MatrixXf& input, const int nu
 
 void nam::Conv1x1::process_(const Eigen::Ref<const Eigen::MatrixXf>& input, const int num_frames)
 {
+  // Note: Profiling is done at the caller level (e.g., _Layer::Process in wavenet.cpp)
+  // to provide meaningful categories (input_mixin, layer1x1, head1x1, rechannel)
+  // rather than generic conv1x1.
   assert(num_frames <= _output.cols());
 
   if (this->_is_depthwise)
   {
     // Depthwise convolution: efficient element-wise multiplication
     // Each channel is scaled by its corresponding weight
-    _output.leftCols(num_frames).noalias() = this->_depthwise_weight.asDiagonal() * input.leftCols(num_frames);
+    if (_external_weights)
+    {
+      Eigen::Map<const Eigen::VectorXf> weight_map(_external_weights, _channels);
+      _output.leftCols(num_frames).noalias() = weight_map.asDiagonal() * input.leftCols(num_frames);
+    }
+    else
+    {
+      _output.leftCols(num_frames).noalias() = this->_depthwise_weight.asDiagonal() * input.leftCols(num_frames);
+    }
   }
   else
   {
@@ -461,7 +473,8 @@ void nam::Conv1x1::process_(const Eigen::Ref<const Eigen::MatrixXf>& input, cons
     const int out_ch = (int)get_out_channels();
     const int in_ch = (int)get_in_channels();
     const float* __restrict__ input_ptr = input.data();
-    const float* __restrict__ weight_ptr = this->_weight.data();
+    // Use external weights if available (DTCM), otherwise use internal Eigen storage
+    const float* __restrict__ weight_ptr = _external_weights ? _external_weights : this->_weight.data();
     float* __restrict__ output_ptr = _output.data();
 
     // Specialized paths for common small sizes
@@ -494,6 +507,20 @@ void nam::Conv1x1::process_(const Eigen::Ref<const Eigen::MatrixXf>& input, cons
       for (int f = 0; f < num_frames; f++)
       {
         output_ptr[f] = w0 * input_ptr[f * 2] + w1 * input_ptr[f * 2 + 1];
+      }
+    }
+    else if (out_ch == 2 && in_ch == 2)
+    {
+      // 2x2 fully unrolled
+      const float w00 = weight_ptr[0], w10 = weight_ptr[1];
+      const float w01 = weight_ptr[2], w11 = weight_ptr[3];
+      for (int f = 0; f < num_frames; f++)
+      {
+        const int off = f * 2;
+        const float i0 = input_ptr[off];
+        const float i1 = input_ptr[off + 1];
+        output_ptr[off]     = w00 * i0 + w01 * i1;
+        output_ptr[off + 1] = w10 * i0 + w11 * i1;
       }
     }
     else if (out_ch == 2 && in_ch == 4)
@@ -633,11 +660,29 @@ void nam::Conv1x1::process_(const Eigen::Ref<const Eigen::MatrixXf>& input, cons
     else
     {
       // Fall back to Eigen for larger matrices where it's more efficient
-      _output.leftCols(num_frames).noalias() = this->_weight * input.leftCols(num_frames);
+      if (_external_weights)
+      {
+        Eigen::Map<const Eigen::MatrixXf> weight_map(_external_weights, out_ch, in_ch);
+        _output.leftCols(num_frames).noalias() = weight_map * input.leftCols(num_frames);
+      }
+      else
+      {
+        _output.leftCols(num_frames).noalias() = this->_weight * input.leftCols(num_frames);
+      }
     }
 #else
     // Single GEMM for all cases - block-diagonal zero structure handles grouping
-    _output.leftCols(num_frames).noalias() = this->_weight * input.leftCols(num_frames);
+    if (_external_weights)
+    {
+      const long out_ch = get_out_channels();
+      const long in_ch = get_in_channels();
+      Eigen::Map<const Eigen::MatrixXf> weight_map(_external_weights, out_ch, in_ch);
+      _output.leftCols(num_frames).noalias() = weight_map * input.leftCols(num_frames);
+    }
+    else
+    {
+      _output.leftCols(num_frames).noalias() = this->_weight * input.leftCols(num_frames);
+    }
 #endif
   }
 
@@ -646,17 +691,54 @@ void nam::Conv1x1::process_(const Eigen::Ref<const Eigen::MatrixXf>& input, cons
 #ifdef NAM_USE_INLINE_GEMM
     const int out_ch = (int)get_out_channels();
     float* __restrict__ output_ptr = _output.data();
-    const float* __restrict__ bias_ptr = this->_bias.data();
-    for (int f = 0; f < num_frames; f++)
+    // Use external bias if available (DTCM), otherwise use internal Eigen storage
+    const float* __restrict__ bias_ptr = _external_bias ? _external_bias : this->_bias.data();
+
+    // Specialized paths for common small channel counts
+    if (out_ch == 2)
     {
-      float* __restrict__ out_col = output_ptr + f * out_ch;
-      for (int o = 0; o < out_ch; o++)
+      const float b0 = bias_ptr[0], b1 = bias_ptr[1];
+      for (int f = 0; f < num_frames; f++)
       {
-        out_col[o] += bias_ptr[o];
+        const int off = f * 2;
+        output_ptr[off] += b0;
+        output_ptr[off + 1] += b1;
+      }
+    }
+    else if (out_ch == 4)
+    {
+      const float b0 = bias_ptr[0], b1 = bias_ptr[1];
+      const float b2 = bias_ptr[2], b3 = bias_ptr[3];
+      for (int f = 0; f < num_frames; f++)
+      {
+        const int off = f * 4;
+        output_ptr[off] += b0;
+        output_ptr[off + 1] += b1;
+        output_ptr[off + 2] += b2;
+        output_ptr[off + 3] += b3;
+      }
+    }
+    else
+    {
+      for (int f = 0; f < num_frames; f++)
+      {
+        float* __restrict__ out_col = output_ptr + f * out_ch;
+        for (int o = 0; o < out_ch; o++)
+        {
+          out_col[o] += bias_ptr[o];
+        }
       }
     }
 #else
-    _output.leftCols(num_frames).colwise() += this->_bias;
+    if (_external_bias)
+    {
+      Eigen::Map<const Eigen::VectorXf> bias_map(_external_bias, this->_bias.size());
+      _output.leftCols(num_frames).colwise() += bias_map;
+    }
+    else
+    {
+      _output.leftCols(num_frames).colwise() += this->_bias;
+    }
 #endif
   }
 }
@@ -705,4 +787,36 @@ size_t nam::Conv1x1::copy_weights_to_buffer(float* buffer, size_t buffer_size) c
   }
 
   return offset;
+}
+
+void nam::Conv1x1::use_external_weights(float* buffer)
+{
+  if (buffer == nullptr)
+  {
+    _external_weights = nullptr;
+    _external_bias = nullptr;
+    return;
+  }
+
+  _external_weights = buffer;
+
+  // Calculate bias offset
+  size_t weight_size = 0;
+  if (this->_is_depthwise)
+  {
+    weight_size = this->_depthwise_weight.size();
+  }
+  else if (this->_weight.size() > 0)
+  {
+    weight_size = this->_weight.size();
+  }
+
+  if (this->_do_bias && this->_bias.size() > 0)
+  {
+    _external_bias = buffer + weight_size;
+  }
+  else
+  {
+    _external_bias = nullptr;
+  }
 }

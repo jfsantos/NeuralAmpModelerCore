@@ -139,6 +139,19 @@ public:
   /// \return Number of floats written, or 0 if buffer too small
   size_t copy_weights_to_buffer(float* buffer, size_t buffer_size) const;
 
+  /// \brief Use weights from an external buffer (e.g., DTCM)
+  ///
+  /// After calling copy_weights_to_buffer(), call this method with the same buffer
+  /// to make the convolution use weights directly from the external buffer.
+  /// This avoids reading from heap memory during processing.
+  ///
+  /// \param buffer Pointer to external weight buffer (must remain valid)
+  void use_external_weights(float* buffer);
+
+  /// \brief Check if external weights are being used
+  /// \return true if using external weight buffer
+  bool using_external_weights() const { return _external_weights != nullptr; }
+
 protected:
   // conv[kernel](cout, cin) - used for non-depthwise convolutions
   std::vector<Eigen::MatrixXf> _weight;
@@ -158,5 +171,9 @@ private:
   Eigen::MatrixXf _cmsis_temp;
 #endif
   int _max_buffer_size = 0; // Stored maxBufferSize
+
+  // External weight buffer support (for DTCM)
+  float* _external_weights = nullptr; // Points to external buffer if set
+  float* _external_bias = nullptr; // Points to bias within external buffer
 };
 } // namespace nam

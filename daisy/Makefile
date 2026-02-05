@@ -34,6 +34,7 @@ CPP_SOURCES += \
 	../NAM/dtcm.cpp \
 	../NAM/get_dsp.cpp \
 	../NAM/lstm.cpp \
+	../NAM/profiling.cpp \
 	../NAM/ring_buffer.cpp \
 	../NAM/util.cpp \
 	../NAM/wavenet.cpp
@@ -60,15 +61,21 @@ C_DEFS += -DNAM_SAMPLE_FLOAT
 # ARM Cortex-M7 architecture flag
 C_DEFS += -D__ARM_ARCH_7EM__
 
+# Enable profiling (comment out to disable)
+C_DEFS += -DNAM_PROFILING
+
 # Matrix multiplication optimization options (uncomment ONE):
 # Option 1: CMSIS-DSP (auto-enabled on ARM, uses arm_mat_mult_f32)
 # Option 2: Inline GEMM (hand-written fused multiply-accumulate)
 # Option 3: Eigen fallback (disable both for default Eigen behavior)
 #
-# Uncomment to use inline GEMM instead of CMSIS-DSP:
+# Using inline GEMM (Option 2) - optimized for small matrices:
 C_DEFS += -DNAM_DISABLE_CMSIS_DSP -DNAM_USE_INLINE_GEMM
 #
-# Uncomment to use pure Eigen (disable all optimizations):
+# Uncomment for Option 1 (CMSIS-DSP):
+# (no defines needed - CMSIS-DSP is enabled by default on ARM)
+#
+# Uncomment for Option 3 (pure Eigen):
 # C_DEFS += -DNAM_DISABLE_CMSIS_DSP
 
 # Use C++17 for std::optional support

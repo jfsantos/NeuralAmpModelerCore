@@ -1,4 +1,5 @@
 #include "conv1d.h"
+#include "profiling.h"
 #include <cstring>
 #include <stdexcept>
 
@@ -151,11 +152,14 @@ void Conv1D::SetMaxBufferSize(const int maxBufferSize)
 
 void Conv1D::Process(const Eigen::MatrixXf& input, const int num_frames)
 {
+  // Note: Profiling is done at the caller level (e.g., _Layer::Process in wavenet.cpp)
+  // to avoid double-counting when Conv1D is called from within profiled blocks.
+
   // Write input to ring buffer
   _input_buffer.Write(input, num_frames);
 
-  // Zero output before processing
-  _output.leftCols(num_frames).setZero();
+  // Note: setZero is deferred - only called for paths that need it (those using +=)
+  // Fused kernel paths use direct assignment (=) and skip setZero
 
   // Process from ring buffer with dilation lookback
   // After Write(), data is at positions [_write_pos, _write_pos+num_frames-1]
@@ -164,6 +168,9 @@ void Conv1D::Process(const Eigen::MatrixXf& input, const int num_frames)
 
   if (this->_is_depthwise)
   {
+    // Depthwise convolution uses += accumulation, so needs setZero
+    _output.leftCols(num_frames).setZero();
+
     // Depthwise convolution: use efficient element-wise multiplication
     // Each channel is processed independently with a single weight per kernel tap.
     // output[c, t] = sum_k(weight[k, c] * input[c, t - k*dilation])
@@ -178,7 +185,9 @@ void Conv1D::Process(const Eigen::MatrixXf& input, const int num_frames)
       const long lookback = -offset;
       auto input_block = _input_buffer.Read(num_frames, lookback);
       const float* __restrict__ input_ptr = input_block.data();
-      const float* __restrict__ weight_ptr = this->_depthwise_weight[k].data();
+      // Use external weights if available (DTCM), otherwise use internal Eigen storage
+      const float* __restrict__ weight_ptr =
+        _external_weights ? (_external_weights + k * channels) : this->_depthwise_weight[k].data();
 
       // Specialized paths for common channel counts
       if (channels == 4)
@@ -239,14 +248,26 @@ void Conv1D::Process(const Eigen::MatrixXf& input, const int num_frames)
       const long lookback = -offset;
       auto input_block = _input_buffer.Read(num_frames, lookback);
       // Element-wise multiply: each row of input_block is multiplied by corresponding weight
-      _output.leftCols(num_frames).noalias() +=
-        this->_depthwise_weight[k].asDiagonal() * input_block.leftCols(num_frames);
+      if (_external_weights)
+      {
+        // Use Eigen::Map over external buffer (DTCM)
+        Eigen::Map<const Eigen::VectorXf> weight_map(_external_weights + k * _channels, _channels);
+        _output.leftCols(num_frames).noalias() += weight_map.asDiagonal() * input_block.leftCols(num_frames);
+      }
+      else
+      {
+        _output.leftCols(num_frames).noalias() +=
+          this->_depthwise_weight[k].asDiagonal() * input_block.leftCols(num_frames);
+      }
     }
 #endif
   }
   else
   {
 #ifdef NAM_USE_CMSIS_DSP
+    // CMSIS-DSP uses += accumulation, so needs setZero
+    _output.leftCols(num_frames).setZero();
+
     // Use CMSIS-DSP optimized matrix multiplication for ARM Cortex-M
     //
     // Eigen uses column-major storage, CMSIS-DSP uses row-major.
@@ -262,6 +283,7 @@ void Conv1D::Process(const Eigen::MatrixXf& input, const int num_frames)
     const uint16_t frames = (uint16_t)num_frames;
     const uint32_t output_size = (uint32_t)(out_ch * frames);
     const size_t kernel_size = this->_weight.size();
+    const size_t weight_matrix_size = out_ch * in_ch;
 
     // Pre-initialize matrix descriptors (dimensions are fixed)
     arm_matrix_instance_f32 matInput = {frames, in_ch, nullptr};
@@ -280,7 +302,8 @@ void Conv1D::Process(const Eigen::MatrixXf& input, const int num_frames)
 
       // Point directly to ring buffer data (no copy needed)
       matInput.pData = const_cast<float*>(input_block.data());
-      matWeight.pData = this->_weight[k].data();
+      // Use external weights if available (DTCM), otherwise use internal Eigen storage
+      matWeight.pData = _external_weights ? (_external_weights + k * weight_matrix_size) : this->_weight[k].data();
 
       // Compute: temp = input * weight (row-major) = weight * input (col-major)
       arm_mat_mult_f32(&matInput, &matWeight, &matTemp);
@@ -299,7 +322,109 @@ void Conv1D::Process(const Eigen::MatrixXf& input, const int num_frames)
     const int out_ch = (int)get_out_channels();
     const int in_ch = (int)get_in_channels();
     const size_t kernel_size = this->_weight.size();
+    const size_t weight_matrix_size = out_ch * in_ch;
 
+    // Fused kernel optimization for kernel_size=3
+    // Instead of 3 separate passes over output, fuse into single pass
+    if (kernel_size == 3 && out_ch == 4 && in_ch == 4)
+    {
+      // Fused 4x4 kernel_size=3: read all 3 input blocks and compute in one pass
+      const long dil = this->_dilation;
+      auto in0 = _input_buffer.Read(num_frames, 2 * dil);  // oldest (k=0)
+      auto in1 = _input_buffer.Read(num_frames, dil);      // middle (k=1)
+      auto in2 = _input_buffer.Read(num_frames, 0);        // newest (k=2)
+
+      const float* __restrict__ in0_ptr = in0.data();
+      const float* __restrict__ in1_ptr = in1.data();
+      const float* __restrict__ in2_ptr = in2.data();
+      float* __restrict__ output_ptr = _output.data();
+
+      // Get weight pointers for all 3 taps
+      const size_t wsize = 16;  // 4x4
+      const float* __restrict__ w0 = _external_weights ? _external_weights : this->_weight[0].data();
+      const float* __restrict__ w1 = _external_weights ? (_external_weights + wsize) : this->_weight[1].data();
+      const float* __restrict__ w2 = _external_weights ? (_external_weights + 2 * wsize) : this->_weight[2].data();
+
+      // Cache all weights in registers (48 floats for 3 x 4x4 matrices)
+      const float w0_00 = w0[0], w0_10 = w0[1], w0_20 = w0[2], w0_30 = w0[3];
+      const float w0_01 = w0[4], w0_11 = w0[5], w0_21 = w0[6], w0_31 = w0[7];
+      const float w0_02 = w0[8], w0_12 = w0[9], w0_22 = w0[10], w0_32 = w0[11];
+      const float w0_03 = w0[12], w0_13 = w0[13], w0_23 = w0[14], w0_33 = w0[15];
+
+      const float w1_00 = w1[0], w1_10 = w1[1], w1_20 = w1[2], w1_30 = w1[3];
+      const float w1_01 = w1[4], w1_11 = w1[5], w1_21 = w1[6], w1_31 = w1[7];
+      const float w1_02 = w1[8], w1_12 = w1[9], w1_22 = w1[10], w1_32 = w1[11];
+      const float w1_03 = w1[12], w1_13 = w1[13], w1_23 = w1[14], w1_33 = w1[15];
+
+      const float w2_00 = w2[0], w2_10 = w2[1], w2_20 = w2[2], w2_30 = w2[3];
+      const float w2_01 = w2[4], w2_11 = w2[5], w2_21 = w2[6], w2_31 = w2[7];
+      const float w2_02 = w2[8], w2_12 = w2[9], w2_22 = w2[10], w2_32 = w2[11];
+      const float w2_03 = w2[12], w2_13 = w2[13], w2_23 = w2[14], w2_33 = w2[15];
+
+      for (int f = 0; f < num_frames; f++)
+      {
+        const int off = f * 4;
+        // Load inputs from all 3 taps
+        const float i0_0 = in0_ptr[off], i0_1 = in0_ptr[off + 1], i0_2 = in0_ptr[off + 2], i0_3 = in0_ptr[off + 3];
+        const float i1_0 = in1_ptr[off], i1_1 = in1_ptr[off + 1], i1_2 = in1_ptr[off + 2], i1_3 = in1_ptr[off + 3];
+        const float i2_0 = in2_ptr[off], i2_1 = in2_ptr[off + 1], i2_2 = in2_ptr[off + 2], i2_3 = in2_ptr[off + 3];
+
+        // Compute output = W0*in0 + W1*in1 + W2*in2 (fused, output was zeroed)
+        output_ptr[off] = (w0_00 * i0_0 + w0_01 * i0_1 + w0_02 * i0_2 + w0_03 * i0_3)
+                          + (w1_00 * i1_0 + w1_01 * i1_1 + w1_02 * i1_2 + w1_03 * i1_3)
+                          + (w2_00 * i2_0 + w2_01 * i2_1 + w2_02 * i2_2 + w2_03 * i2_3);
+        output_ptr[off + 1] = (w0_10 * i0_0 + w0_11 * i0_1 + w0_12 * i0_2 + w0_13 * i0_3)
+                              + (w1_10 * i1_0 + w1_11 * i1_1 + w1_12 * i1_2 + w1_13 * i1_3)
+                              + (w2_10 * i2_0 + w2_11 * i2_1 + w2_12 * i2_2 + w2_13 * i2_3);
+        output_ptr[off + 2] = (w0_20 * i0_0 + w0_21 * i0_1 + w0_22 * i0_2 + w0_23 * i0_3)
+                              + (w1_20 * i1_0 + w1_21 * i1_1 + w1_22 * i1_2 + w1_23 * i1_3)
+                              + (w2_20 * i2_0 + w2_21 * i2_1 + w2_22 * i2_2 + w2_23 * i2_3);
+        output_ptr[off + 3] = (w0_30 * i0_0 + w0_31 * i0_1 + w0_32 * i0_2 + w0_33 * i0_3)
+                              + (w1_30 * i1_0 + w1_31 * i1_1 + w1_32 * i1_2 + w1_33 * i1_3)
+                              + (w2_30 * i2_0 + w2_31 * i2_1 + w2_32 * i2_2 + w2_33 * i2_3);
+      }
+    }
+    else if (kernel_size == 3 && out_ch == 2 && in_ch == 2)
+    {
+      // Fused 2x2 kernel_size=3: read all 3 input blocks and compute in one pass
+      const long dil = this->_dilation;
+      auto in0 = _input_buffer.Read(num_frames, 2 * dil);
+      auto in1 = _input_buffer.Read(num_frames, dil);
+      auto in2 = _input_buffer.Read(num_frames, 0);
+
+      const float* __restrict__ in0_ptr = in0.data();
+      const float* __restrict__ in1_ptr = in1.data();
+      const float* __restrict__ in2_ptr = in2.data();
+      float* __restrict__ output_ptr = _output.data();
+
+      const size_t wsize = 4;  // 2x2
+      const float* __restrict__ w0 = _external_weights ? _external_weights : this->_weight[0].data();
+      const float* __restrict__ w1 = _external_weights ? (_external_weights + wsize) : this->_weight[1].data();
+      const float* __restrict__ w2 = _external_weights ? (_external_weights + 2 * wsize) : this->_weight[2].data();
+
+      // Cache weights (12 floats total)
+      const float w0_00 = w0[0], w0_10 = w0[1], w0_01 = w0[2], w0_11 = w0[3];
+      const float w1_00 = w1[0], w1_10 = w1[1], w1_01 = w1[2], w1_11 = w1[3];
+      const float w2_00 = w2[0], w2_10 = w2[1], w2_01 = w2[2], w2_11 = w2[3];
+
+      for (int f = 0; f < num_frames; f++)
+      {
+        const int off = f * 2;
+        const float i0_0 = in0_ptr[off], i0_1 = in0_ptr[off + 1];
+        const float i1_0 = in1_ptr[off], i1_1 = in1_ptr[off + 1];
+        const float i2_0 = in2_ptr[off], i2_1 = in2_ptr[off + 1];
+
+        output_ptr[off] = (w0_00 * i0_0 + w0_01 * i0_1) + (w1_00 * i1_0 + w1_01 * i1_1) + (w2_00 * i2_0 + w2_01 * i2_1);
+        output_ptr[off + 1] =
+          (w0_10 * i0_0 + w0_11 * i0_1) + (w1_10 * i1_0 + w1_11 * i1_1) + (w2_10 * i2_0 + w2_11 * i2_1);
+      }
+    }
+    else
+    {
+    // General inline GEMM path uses += accumulation, so needs setZero
+    _output.leftCols(num_frames).setZero();
+
+    // General inline GEMM path for other configurations
     for (size_t k = 0; k < kernel_size; k++)
     {
       const long offset = this->_dilation * (k + 1 - (long)kernel_size);
@@ -307,7 +432,9 @@ void Conv1D::Process(const Eigen::MatrixXf& input, const int num_frames)
       auto input_block = _input_buffer.Read(num_frames, lookback);
 
       const float* __restrict__ input_ptr = input_block.data();
-      const float* __restrict__ weight_ptr = this->_weight[k].data();
+      // Use external weights if available (DTCM), otherwise use internal Eigen storage
+      const float* __restrict__ weight_ptr =
+        _external_weights ? (_external_weights + k * weight_matrix_size) : this->_weight[k].data();
       float* __restrict__ output_ptr = _output.data();
 
       // Specialized fully-unrolled paths for common small channel counts
@@ -494,22 +621,45 @@ void Conv1D::Process(const Eigen::MatrixXf& input, const int num_frames)
       else
       {
         // Fall back to Eigen for larger matrices where it's more efficient
-        _output.leftCols(num_frames).noalias() += this->_weight[k] * input_block;
+        if (_external_weights)
+        {
+          Eigen::Map<const Eigen::MatrixXf> weight_map(_external_weights + k * weight_matrix_size, out_ch, in_ch);
+          _output.leftCols(num_frames).noalias() += weight_map * input_block;
+        }
+        else
+        {
+          _output.leftCols(num_frames).noalias() += this->_weight[k] * input_block;
+        }
       }
     }
+    } // end else (general GEMM path)
 #else
+    // Eigen fallback uses += accumulation, so needs setZero
+    _output.leftCols(num_frames).setZero();
+
     // Eigen fallback for non-ARM platforms
     // Grouped convolution note: The weight matrices are block-diagonal (zeros off-diagonal),
     // so we can use a single GEMM for all cases. A more advanced implementation could store
     // compact per-group weight matrices and loop over groups, but at typical model sizes
     // (e.g. 8 channels, 4 groups, 64 samples), the GEMM call overhead tends to dominate
     // and the single sparse GEMM approach is faster.
+    const long out_ch = get_out_channels();
+    const long in_ch = get_in_channels();
+    const size_t weight_matrix_size = out_ch * in_ch;
     for (size_t k = 0; k < this->_weight.size(); k++)
     {
       const long offset = this->_dilation * (k + 1 - (long)this->_weight.size());
       const long lookback = -offset;
       auto input_block = _input_buffer.Read(num_frames, lookback);
-      _output.leftCols(num_frames).noalias() += this->_weight[k] * input_block;
+      if (_external_weights)
+      {
+        Eigen::Map<const Eigen::MatrixXf> weight_map(_external_weights + k * weight_matrix_size, out_ch, in_ch);
+        _output.leftCols(num_frames).noalias() += weight_map * input_block;
+      }
+      else
+      {
+        _output.leftCols(num_frames).noalias() += this->_weight[k] * input_block;
+      }
     }
 #endif
   }
@@ -521,8 +671,9 @@ void Conv1D::Process(const Eigen::MatrixXf& input, const int num_frames)
     // Use CMSIS-DSP for bias addition (broadcast across frames)
     const long out_channels = get_out_channels();
     float* out_ptr = _output.data();
+    // Use external bias if available (DTCM), otherwise use internal Eigen storage
     // CMSIS-DSP takes non-const pointers, but bias won't be modified
-    float* bias_ptr = const_cast<float*>(this->_bias.data());
+    float* bias_ptr = _external_bias ? _external_bias : const_cast<float*>(this->_bias.data());
     for (int frame = 0; frame < num_frames; frame++)
     {
       arm_add_f32(out_ptr, bias_ptr, out_ptr, (uint32_t)out_channels);
@@ -532,7 +683,8 @@ void Conv1D::Process(const Eigen::MatrixXf& input, const int num_frames)
     // Inline bias addition for small channel counts
     const int out_ch = (int)get_out_channels();
     float* __restrict__ output_ptr = _output.data();
-    const float* __restrict__ bias_ptr = this->_bias.data();
+    // Use external bias if available (DTCM), otherwise use internal Eigen storage
+    const float* __restrict__ bias_ptr = _external_bias ? _external_bias : this->_bias.data();
 
     if (out_ch == 2)
     {
@@ -608,7 +760,15 @@ void Conv1D::Process(const Eigen::MatrixXf& input, const int num_frames)
       }
     }
 #else
-    _output.leftCols(num_frames).colwise() += this->_bias;
+    if (_external_bias)
+    {
+      Eigen::Map<const Eigen::VectorXf> bias_map(_external_bias, this->_bias.size());
+      _output.leftCols(num_frames).colwise() += bias_map;
+    }
+    else
+    {
+      _output.leftCols(num_frames).colwise() += this->_bias;
+    }
 #endif
   }
 
@@ -729,5 +889,37 @@ size_t Conv1D::copy_weights_to_buffer(float* buffer, size_t buffer_size) const
   }
 
   return offset;
+}
+
+void Conv1D::use_external_weights(float* buffer)
+{
+  if (buffer == nullptr)
+  {
+    _external_weights = nullptr;
+    _external_bias = nullptr;
+    return;
+  }
+
+  _external_weights = buffer;
+
+  // Calculate bias offset
+  size_t weight_size = 0;
+  if (this->_is_depthwise)
+  {
+    weight_size = this->_channels * this->_depthwise_weight.size();
+  }
+  else if (this->_weight.size() > 0)
+  {
+    weight_size = this->_weight[0].size() * this->_weight.size();
+  }
+
+  if (this->_bias.size() > 0)
+  {
+    _external_bias = buffer + weight_size;
+  }
+  else
+  {
+    _external_bias = nullptr;
+  }
 }
 } // namespace nam
