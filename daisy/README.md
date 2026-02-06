@@ -5,13 +5,14 @@ This folder contains a benchmarking tool for the Electrosmith Daisy board. To bu
 ```
 git clone https://github.com/electro-smith/DaisyExamples
 cd DaisyExamples
+git submodule update --init
 git submodule add -b daisy https://github.com/jfsantos/NeuralAmpModelerCore seed/
 ```
 
 To build, you need to have the Daisy toolchain installed and in your path, then just run `make` in the `NeuralAmpModelerCore/daisy` repo:
 
 ```
-cd seed/NeuralAmpModelerCore
+cd seed/NeuralAmpModelerCore/daisy
 make
 make program-dfu # to copy the code to the Daisy board via USB
 ```
