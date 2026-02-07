@@ -1,4 +1,4 @@
-# NAM Benchmark for Daisy Seed
+# NAM Guitar Pedal for Daisy Pod
 # Project Name
 TARGET = NAMDaisy
 
@@ -62,7 +62,7 @@ C_DEFS += -DNAM_SAMPLE_FLOAT
 C_DEFS += -D__ARM_ARCH_7EM__
 
 # Enable profiling (comment out to disable)
-C_DEFS += -DNAM_PROFILING
+# C_DEFS += -DNAM_PROFILING
 
 # Matrix multiplication optimization options (uncomment ONE):
 # Option 1: CMSIS-DSP (auto-enabled on ARM, uses arm_mat_mult_f32)

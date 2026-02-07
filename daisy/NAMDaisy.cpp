@@ -1,12 +1,19 @@
-// NAM Benchmark for Daisy Pod
+// NAM Guitar Pedal for Daisy Pod
 //
-// This example loads all Neural Amp Modeler (.nam) files from the SD card
-// and runs a benchmark on each one by processing silence buffers.
+// Real-time Neural Amp Modeler effect pedal.
+// Loads .nam model files from the SD card and processes live audio.
 //
-// Usage:
-// 1. Place .nam model files on the SD card root
-// 2. Flash this program to the Daisy Pod
-// 3. Connect via USB serial (115200 baud) to see benchmark results
+// Controls:
+//   SW_1:    Toggle effect bypass (on/off)
+//   POT1:    Input volume
+//   POT2:    Output volume
+//   Encoder: Select .nam model (CW = next, CCW = previous, wraps around)
+//
+// LEDs:
+//   Green:  Effect active
+//   Red:    Bypassed
+//   Blue:   Loading model
+//   Yellow: No .nam files found
 
 #include <cstdio>
 #include <cstring>
@@ -17,7 +24,6 @@
 #include "NAM/dsp.h"
 #include "NAM/dtcm.h"
 #include "NAM/activations.h"
-#include "NAM/profiling.h"
 #include "get_dsp_fatfs.h"
 
 using namespace daisy;
@@ -25,9 +31,12 @@ using namespace daisy;
 // Configuration
 static constexpr size_t AUDIO_BUFFER_SIZE = 48;
 static constexpr float SAMPLE_RATE = 48000.0f;
-static constexpr size_t BENCHMARK_DURATION_SECONDS = 2;
-static constexpr size_t NUM_BENCHMARK_BUFFERS =
-  (static_cast<size_t>(SAMPLE_RATE) / AUDIO_BUFFER_SIZE) * BENCHMARK_DURATION_SECONDS;
+
+// File management
+static constexpr size_t MAX_NAM_FILES = 32;
+static constexpr size_t MAX_FILENAME_LEN = 64;
+static char s_namFiles[MAX_NAM_FILES][MAX_FILENAME_LEN];
+static size_t s_numNamFiles = 0;
 
 // Hardware
 static DaisyPod hw;
@@ -44,17 +53,20 @@ static NAM_SAMPLE outputBuffer[AUDIO_BUFFER_SIZE];
 static NAM_SAMPLE* inputPtr = inputBuffer;
 static NAM_SAMPLE* outputPtr = outputBuffer;
 
-// Simple pseudo-random number generator for test signal
-static uint32_t s_rng_state = 12345;
-static float NextRandom()
-{
-  // xorshift32
-  s_rng_state ^= s_rng_state << 13;
-  s_rng_state ^= s_rng_state >> 17;
-  s_rng_state ^= s_rng_state << 5;
-  // Convert to float in range [-0.5, 0.5] (typical guitar signal level)
-  return ((float)(s_rng_state & 0xFFFFFF) / (float)0xFFFFFF) - 0.5f;
-}
+// Model state
+static std::unique_ptr<nam::DSP> s_modelOwner;
+static volatile nam::DSP* s_activeModel = nullptr;
+
+// Inter-context communication (audio callback <-> main loop)
+static volatile int s_requestedModelIndex = 0;
+static volatile int s_currentModelIndex = 0;
+static volatile bool s_modelLoadRequested = false;
+static volatile bool s_modelLoading = false;
+
+// Control state (written in main loop, read by audio callback)
+static volatile bool s_effectEnabled = true;
+static volatile float s_inputGain = 1.0f;
+static volatile float s_outputGain = 1.0f;
 
 // USB serial output helper
 static char printBuffer[256];
@@ -103,130 +115,6 @@ bool InitSDCard()
   return result == FR_OK;
 }
 
-void RunBenchmark(std::unique_ptr<nam::DSP>& model, const char* filename)
-{
-  Printf("Benchmarking: %s", filename);
-
-  // Reset the model with our sample rate and buffer size
-  model->Reset(SAMPLE_RATE, AUDIO_BUFFER_SIZE);
-
-  // Warm up the model with realistic signal (not silence)
-  s_rng_state = 12345; // Reset RNG for reproducibility
-  for (size_t i = 0; i < 100; i++)
-  {
-    // Generate noise input each warmup iteration
-    for (size_t j = 0; j < AUDIO_BUFFER_SIZE; j++)
-    {
-      inputBuffer[j] = NextRandom();
-    }
-    model->process(&inputPtr, &outputPtr, AUDIO_BUFFER_SIZE);
-  }
-
-  // Reset profiling counters
-#ifdef NAM_PROFILING
-  nam::profiling::g_timings.reset();
-#endif
-
-  // Run benchmark multiple times to measure variance
-  static constexpr int NUM_RUNS = 3;
-  uint32_t runTimes[NUM_RUNS];
-  uint32_t minTime = UINT32_MAX;
-  uint32_t maxTime = 0;
-  uint32_t totalTime = 0;
-
-  for (int run = 0; run < NUM_RUNS; run++)
-  {
-    // Reset RNG state for each run to ensure same input sequence
-    s_rng_state = 67890 + run * 11111;
-
-#ifdef NAM_PROFILING
-    // Only collect profiling on last run
-    if (run == NUM_RUNS - 1)
-      nam::profiling::g_timings.reset();
-#endif
-
-    uint32_t startTime = System::GetUs();
-
-    for (size_t i = 0; i < NUM_BENCHMARK_BUFFERS; i++)
-    {
-      // Generate realistic input signal each buffer (noise simulates guitar signal)
-      for (size_t j = 0; j < AUDIO_BUFFER_SIZE; j++)
-      {
-        inputBuffer[j] = NextRandom();
-      }
-      model->process(&inputPtr, &outputPtr, AUDIO_BUFFER_SIZE);
-    }
-
-    uint32_t endTime = System::GetUs();
-    runTimes[run] = endTime - startTime;
-
-    if (runTimes[run] < minTime)
-      minTime = runTimes[run];
-    if (runTimes[run] > maxTime)
-      maxTime = runTimes[run];
-    totalTime += runTimes[run];
-  }
-
-  // Use minimum time (best case, least interference from system)
-  uint32_t benchmarkTimeUs = minTime;
-
-  // Calculate and print results
-  // Note: nano specs doesn't support %f, so we use integer math
-  uint32_t totalTimeMs = benchmarkTimeUs / 1000;
-  uint32_t totalTimeFrac = (benchmarkTimeUs % 1000) / 10; // 2 decimal places
-  size_t totalSamples = NUM_BENCHMARK_BUFFERS * AUDIO_BUFFER_SIZE;
-  uint32_t audioTimeMs = (totalSamples * 1000) / (uint32_t)SAMPLE_RATE;
-
-  // Real-time factor as percentage (100 = 1.0x, 200 = 2.0x, etc.)
-  uint32_t realTimePercent = (audioTimeMs * 100) / totalTimeMs;
-
-  // Variance info
-  uint32_t varianceMs = (maxTime - minTime) / 1000;
-
-  Printf("  Best: %lu.%02lu ms | Audio: %lu ms | RT: %lu.%02lux | Var: %lu ms | %s", (unsigned long)totalTimeMs,
-         (unsigned long)totalTimeFrac, (unsigned long)audioTimeMs, (unsigned long)(realTimePercent / 100),
-         (unsigned long)(realTimePercent % 100), (unsigned long)varianceMs, realTimePercent >= 100 ? "OK" : "SLOW");
-
-#ifdef NAM_PROFILING
-  // Print profiling breakdown
-  PrintLine("  [Profiling enabled]");
-  const auto& t = nam::profiling::g_timings;
-  uint32_t profTotal = t.total();
-  Printf("  Profiling total: %lu us", (unsigned long)profTotal);
-  if (profTotal > 0)
-  {
-    // Convert to milliseconds and calculate percentages
-    Printf("  Profiling breakdown (ms / %%):");
-    Printf("    Conv1D:     %lu (%lu%%)", (unsigned long)(t.conv1d / 1000), (unsigned long)(t.conv1d * 100 / profTotal));
-    Printf("    InputMixin: %lu (%lu%%)", (unsigned long)(t.input_mixin / 1000),
-           (unsigned long)(t.input_mixin * 100 / profTotal));
-    Printf("    Layer1x1:   %lu (%lu%%)", (unsigned long)(t.layer1x1 / 1000),
-           (unsigned long)(t.layer1x1 * 100 / profTotal));
-    Printf("    Head1x1:    %lu (%lu%%)", (unsigned long)(t.head1x1 / 1000),
-           (unsigned long)(t.head1x1 * 100 / profTotal));
-    Printf("    Rechannel:  %lu (%lu%%)", (unsigned long)(t.rechannel / 1000),
-           (unsigned long)(t.rechannel * 100 / profTotal));
-    Printf("    Conv1x1:    %lu (%lu%%)", (unsigned long)(t.conv1x1 / 1000),
-           (unsigned long)(t.conv1x1 * 100 / profTotal));
-    Printf("    Activation: %lu (%lu%%)", (unsigned long)(t.activation / 1000),
-           (unsigned long)(t.activation * 100 / profTotal));
-    Printf("    FiLM:       %lu (%lu%%)", (unsigned long)(t.film / 1000),
-           (unsigned long)(t.film * 100 / profTotal));
-    Printf("    Copies:     %lu (%lu%%)", (unsigned long)(t.copies / 1000),
-           (unsigned long)(t.copies * 100 / profTotal));
-    Printf("    SetZero:    %lu (%lu%%)", (unsigned long)(t.setzero / 1000),
-           (unsigned long)(t.setzero * 100 / profTotal));
-    Printf("    RingBuf:    %lu (%lu%%)", (unsigned long)(t.ringbuf / 1000),
-           (unsigned long)(t.ringbuf * 100 / profTotal));
-    Printf("    Condition:  %lu (%lu%%)", (unsigned long)(t.condition / 1000),
-           (unsigned long)(t.condition * 100 / profTotal));
-    Printf("    Other:      %lu (%lu%%)", (unsigned long)(t.other / 1000),
-           (unsigned long)(t.other * 100 / profTotal));
-    Printf("    Total prof: %lu ms", (unsigned long)(profTotal / 1000));
-  }
-#endif
-}
-
 // Check if filename ends with .nam (case insensitive)
 bool IsNamFile(const char* filename)
 {
@@ -242,16 +130,172 @@ bool IsNamFile(const char* filename)
           && (ext[3] == 'm' || ext[3] == 'M'));
 }
 
+// Scan SD card root for .nam files and store filenames
+void ScanNamFiles()
+{
+  DIR& dir = s_dir;
+  FILINFO& fno = s_fno;
+  s_numNamFiles = 0;
+
+  FRESULT result = f_opendir(&dir, "/");
+  if (result != FR_OK)
+  {
+    PrintLine("ERROR: Failed to open root directory");
+    return;
+  }
+
+  while (s_numNamFiles < MAX_NAM_FILES)
+  {
+    result = f_readdir(&dir, &fno);
+    if (result != FR_OK || fno.fname[0] == 0)
+      break;
+
+    if (fno.fattrib & AM_DIR)
+      continue;
+
+    if (!IsNamFile(fno.fname))
+      continue;
+
+    strncpy(s_namFiles[s_numNamFiles], fno.fname, MAX_FILENAME_LEN - 1);
+    s_namFiles[s_numNamFiles][MAX_FILENAME_LEN - 1] = '\0';
+    Printf("  [%d] %s", (int)s_numNamFiles, s_namFiles[s_numNamFiles]);
+    s_numNamFiles++;
+  }
+
+  f_closedir(&dir);
+  Printf("Found %d .nam file(s)", (int)s_numNamFiles);
+}
+
+// Load a model by index from the filename array
+bool LoadModel(int index)
+{
+  if (index < 0 || index >= (int)s_numNamFiles)
+    return false;
+
+  s_modelLoading = true;
+  Printf("Loading: %s [%d/%d]", s_namFiles[index], index + 1, (int)s_numNamFiles);
+
+  std::unique_ptr<nam::DSP> newModel = nam::get_dsp_fatfs(s_namFiles[index]);
+  if (!newModel)
+  {
+    Printf("FAILED: %s", nam::get_dsp_fatfs_error_string(nam::get_dsp_fatfs_last_error()));
+    s_modelLoading = false;
+    return false;
+  }
+
+  // Deactivate current model while we set up the new one
+  s_activeModel = nullptr;
+  __asm volatile("" ::: "memory");
+
+  // Copy weights to DTCM for faster access
+  nam::dtcm::reset_weight_allocator();
+  if (newModel->copy_weights_to_dtcm())
+  {
+    Printf("  DTCM: %lu floats (%lu KB)", (unsigned long)nam::dtcm::get_weights_used(),
+           (unsigned long)(nam::dtcm::get_weights_used() * sizeof(float) / 1024));
+  }
+  else
+  {
+    Printf("  DTCM: Model too large (%lu floats needed, %lu available)",
+           (unsigned long)newModel->get_total_weight_count(),
+           (unsigned long)nam::dtcm::get_weights_available());
+  }
+
+  // Reset and prewarm
+  newModel->ResetAndPrewarm(SAMPLE_RATE, AUDIO_BUFFER_SIZE);
+
+  // Swap ownership and activate
+  s_modelOwner = std::move(newModel);
+  __asm volatile("" ::: "memory");
+  s_activeModel = s_modelOwner.get();
+
+  s_currentModelIndex = index;
+  s_modelLoading = false;
+
+  Printf("Loaded: %s", s_namFiles[index]);
+  return true;
+}
+
+// Update LEDs based on current state
+void UpdateLeds()
+{
+  if (s_numNamFiles == 0)
+  {
+    // No files found: yellow
+    hw.led1.Set(1.0f, 0.8f, 0.0f);
+    hw.led2.Set(0.0f, 0.0f, 0.0f);
+  }
+  else if (s_modelLoading)
+  {
+    // Loading: blue
+    hw.led1.Set(0.0f, 0.0f, 1.0f);
+    hw.led2.Set(0.0f, 0.0f, 1.0f);
+  }
+  else if (s_effectEnabled && s_activeModel != nullptr)
+  {
+    // Effect active: green, LED2 brightness tracks output gain
+    hw.led1.Set(0.0f, 1.0f, 0.0f);
+    hw.led2.Set(0.0f, s_outputGain, 0.0f);
+  }
+  else
+  {
+    // Bypassed: dim red
+    hw.led1.Set(0.3f, 0.0f, 0.0f);
+    hw.led2.Set(0.0f, 0.0f, 0.0f);
+  }
+
+  hw.UpdateLeds();
+}
+
+// Real-time audio callback (interleaving: in/out are L,R,L,R,... size = total samples)
+static void AudioCallback(AudioHandle::InterleavingInputBuffer  in,
+                           AudioHandle::InterleavingOutputBuffer out,
+                           size_t                                size)
+{
+  nam::DSP* model = const_cast<nam::DSP*>(s_activeModel);
+  float inGain = s_inputGain;
+  float outGain = s_outputGain;
+  size_t numFrames = size / 2;
+
+  if (s_effectEnabled && model != nullptr)
+  {
+    // Extract left channel with input gain
+    for (size_t i = 0; i < numFrames; i++)
+    {
+      inputBuffer[i] = in[i * 2] * inGain;
+    }
+
+    // Process through NAM model (mono)
+    model->process(&inputPtr, &outputPtr, numFrames);
+
+    // Write output to both channels with output gain
+    for (size_t i = 0; i < numFrames; i++)
+    {
+      float sample = outputBuffer[i] * outGain;
+      out[i * 2]     = sample;
+      out[i * 2 + 1] = sample;
+    }
+  }
+  else
+  {
+    // Bypass: pass left input through to both channels
+    for (size_t i = 0; i < size; i += 2)
+    {
+      out[i]     = in[i];
+      out[i + 1] = in[i];
+    }
+  }
+}
+
 int main(void)
 {
-  // Initialize hardware
   hw.Init();
   hw.seed.StartLog(true);
   System::Delay(100);
 
   PrintLine("");
   PrintLine("=================================");
-  PrintLine("NAM Benchmark for Daisy Pod");
+  PrintLine("NAM Guitar Pedal for Daisy Pod");
   PrintLine("=================================");
 
   // Initialize SD card
@@ -259,7 +303,7 @@ int main(void)
   if (!InitSDCard())
   {
     PrintLine("ERROR: SD card mount failed");
-    hw.led1.Set(1.0f, 0.0f, 0.0f); // Red LED
+    hw.led1.Set(1.0f, 0.0f, 0.0f);
     hw.UpdateLeds();
     for (;;)
     {
@@ -272,117 +316,79 @@ int main(void)
   // Enable fast tanh approximation for better performance
   nam::activations::Activation::enable_fast_tanh();
 
-  // Open root directory (using static structures for DMA access)
-  DIR& dir = s_dir;
-  FILINFO& fno = s_fno;
-  FRESULT result = f_opendir(&dir, "/");
-
-  if (result != FR_OK)
-  {
-    PrintLine("ERROR: Failed to open root directory");
-    hw.led1.Set(1.0f, 0.0f, 0.0f); // Red LED
-    hw.UpdateLeds();
-    for (;;)
-    {
-      System::Delay(100);
-    }
-  }
-
-  // Count and process .nam files
-  int fileCount = 0;
-  int successCount = 0;
-  int failCount = 0;
-
+  // Scan for .nam files
   PrintLine("Scanning for .nam files...");
+  ScanNamFiles();
   PrintLine("");
 
-  // Iterate through directory
-  while (true)
+  // Load first model if available
+  if (s_numNamFiles > 0)
   {
-    result = f_readdir(&dir, &fno);
-
-    if (result != FR_OK || fno.fname[0] == 0)
+    if (!LoadModel(0))
     {
-      break; // Error or end of directory
+      PrintLine("WARNING: First model failed to load");
     }
-
-    // Skip directories
-    if (fno.fattrib & AM_DIR)
-    {
-      continue;
-    }
-
-    // Check if it's a .nam file
-    if (!IsNamFile(fno.fname))
-    {
-      continue;
-    }
-
-    fileCount++;
-
-    // Load the model
-    std::unique_ptr<nam::DSP> model = nam::get_dsp_fatfs(fno.fname);
-
-    if (model == nullptr)
-    {
-      Printf("FAILED: %s - %s", fno.fname, nam::get_dsp_fatfs_error_string(nam::get_dsp_fatfs_last_error()));
-      failCount++;
-      continue;
-    }
-
-    // Copy weights to DTCM for faster access
-    nam::dtcm::reset_weight_allocator();
-    if (model->copy_weights_to_dtcm())
-    {
-      Printf("  DTCM: %lu floats (%lu KB)", (unsigned long)nam::dtcm::get_weights_used(),
-             (unsigned long)(nam::dtcm::get_weights_used() * sizeof(float) / 1024));
-    }
-    else
-    {
-      Printf("  DTCM: Model too large (%lu floats needed, %lu available)",
-             (unsigned long)model->get_total_weight_count(), (unsigned long)nam::dtcm::get_weights_available());
-    }
-
-    // Run benchmark
-    RunBenchmark(model, fno.fname);
-    successCount++;
-
-    // Release model memory before loading next
-    model.reset();
-  }
-
-  f_closedir(&dir);
-
-  // Print summary
-  PrintLine("");
-  PrintLine("=================================");
-  Printf("Total files: %d", fileCount);
-  Printf("Successful:  %d", successCount);
-  Printf("Failed:      %d", failCount);
-  PrintLine("=================================");
-
-  // Set LED based on results
-  if (fileCount == 0)
-  {
-    PrintLine("No .nam files found on SD card");
-    hw.led1.Set(1.0f, 1.0f, 0.0f); // Yellow LED
-  }
-  else if (failCount == 0)
-  {
-    hw.led1.Set(0.0f, 1.0f, 0.0f); // Green LED
   }
   else
   {
-    hw.led1.Set(1.0f, 0.5f, 0.0f); // Orange LED
+    PrintLine("No .nam files found - running in bypass mode");
   }
-  hw.UpdateLeds();
 
-  PrintLine("");
-  PrintLine("Benchmark complete.");
+  // Start audio
+  hw.SetAudioBlockSize(AUDIO_BUFFER_SIZE);
+  hw.StartAdc();
+  hw.StartAudio(AudioCallback);
+  PrintLine("Audio started.");
 
-  // Main loop - idle
+  // Main loop: process controls and handle model switching
   for (;;)
   {
-    System::Delay(100);
+    hw.ProcessAllControls();
+
+    // SW_1: toggle bypass
+    if (hw.button1.RisingEdge())
+    {
+      s_effectEnabled = !s_effectEnabled;
+    }
+
+    // Knobs: input and output gain (Value() since ProcessAllControls already called Process())
+    s_inputGain = hw.knob1.Value();
+    s_outputGain = hw.knob2.Value();
+
+    // Encoder: model selection
+    int32_t enc = hw.encoder.Increment();
+    if (enc != 0 && s_numNamFiles > 0 && !s_modelLoading)
+    {
+      int newIndex = s_requestedModelIndex + enc;
+      if (newIndex < 0)
+        newIndex = (int)s_numNamFiles - 1;
+      else if (newIndex >= (int)s_numNamFiles)
+        newIndex = 0;
+
+      s_requestedModelIndex = newIndex;
+      s_modelLoadRequested = true;
+    }
+
+    // Update LEDs
+    UpdateLeds();
+
+    // Handle model switching
+    if (s_modelLoadRequested)
+    {
+      s_modelLoadRequested = false;
+      int targetIndex = s_requestedModelIndex;
+
+      if (targetIndex != s_currentModelIndex)
+      {
+        if (!LoadModel(targetIndex))
+        {
+          // Load failed: revert to current model
+          s_requestedModelIndex = s_currentModelIndex;
+          Printf("Load failed, keeping current model [%d]", (int)s_currentModelIndex + 1);
+        }
+      }
+    }
+
+    System::Delay(1);
   }
 }
