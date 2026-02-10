@@ -154,6 +154,13 @@ public:
   /// \param outputLevel Output level in dBu
   void SetOutputLevel(const double outputLevel);
 
+  /// \brief Zero all model weights (for debugging numerical issues)
+  ///
+  /// Sets all weights to zero while preserving the model structure.
+  /// Useful for isolating whether performance differences come from
+  /// numerical instability (NaN/Inf from trained weights) vs structural issues.
+  virtual void zero_weights() {}
+
   /// \brief Copy all model weights to DTCM buffer for faster access
   ///
   /// This copies weights from heap-allocated Eigen matrices to a static DTCM buffer

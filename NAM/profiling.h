@@ -75,8 +75,11 @@ struct Timings {
 // Global timing accumulator
 extern Timings g_timings;
 
-// Get current time in microseconds (platform-specific)
-uint32_t get_time_us();
+// Get raw cycle count (platform-specific). Use for delta computation only.
+uint32_t get_cycles();
+
+// CPU cycles per microsecond (platform-specific)
+uint32_t cycles_per_us();
 
 // Reset profiling counters
 inline void reset() { g_timings.reset(); }
@@ -121,17 +124,22 @@ inline void print_results() {
 //   NAM_PROFILE_START();
 //   // ... code to profile ...
 //   NAM_PROFILE_ADD(conv1d);  // Adds elapsed time to conv1d, resets timer
+//
+// IMPORTANT: These macros subtract raw cycle counts BEFORE dividing by
+// cycles_per_us. This is critical because DWT->CYCCNT wraps every ~8.95s
+// at 480 MHz. Unsigned subtraction of raw cycles handles wrap correctly;
+// dividing first and then subtracting does NOT.
 
-#define NAM_PROFILE_START() uint32_t _prof_start = nam::profiling::get_time_us()
+#define NAM_PROFILE_START() uint32_t _prof_start_cyc = nam::profiling::get_cycles()
 #define NAM_PROFILE_ADD(category) do { \
-  uint32_t _prof_now = nam::profiling::get_time_us(); \
-  nam::profiling::g_timings.category += (_prof_now - _prof_start); \
-  _prof_start = _prof_now; \
+  uint32_t _prof_now_cyc = nam::profiling::get_cycles(); \
+  nam::profiling::g_timings.category += (_prof_now_cyc - _prof_start_cyc) / nam::profiling::cycles_per_us(); \
+  _prof_start_cyc = _prof_now_cyc; \
 } while(0)
 
 // Variant that doesn't reset the timer (for one-shot measurements)
 #define NAM_PROFILE_ADD_NORESTART(category) \
-  nam::profiling::g_timings.category += (nam::profiling::get_time_us() - _prof_start)
+  nam::profiling::g_timings.category += (nam::profiling::get_cycles() - _prof_start_cyc) / nam::profiling::cycles_per_us()
 
 } // namespace profiling
 } // namespace nam

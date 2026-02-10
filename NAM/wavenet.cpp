@@ -471,7 +471,7 @@ void nam::wavenet::_LayerArray::ProcessInner(const Eigen::MatrixXf& layer_inputs
 
   // Process head rechannel
 #ifdef NAM_PROFILING
-  _prof_start = nam::profiling::get_time_us();  // Reset timer for accurate head_rechannel measurement
+  _prof_start_cyc = nam::profiling::get_cycles();  // Reset timer for accurate head_rechannel measurement
 #endif
   _head_rechannel.process_(this->_head_inputs, num_frames);
   NAM_PROFILE_ADD(rechannel);
@@ -1293,6 +1293,23 @@ size_t nam::wavenet::WaveNet::get_total_weight_count() const
   count += 1;
 
   return count;
+}
+
+void nam::wavenet::WaveNet::zero_weights()
+{
+  // Create a zero vector matching the weight layout and re-set all weights.
+  // This zeros internal Eigen matrices via the normal set_weights_ path.
+  // Note: condition_dsp weights are set during construction and not included
+  // in set_weights_(), so we subtract them from the count.
+  size_t total = get_total_weight_count();
+  if (this->_condition_dsp)
+    total -= this->_condition_dsp->get_total_weight_count();
+  std::vector<float> zeros(total, 0.0f);
+  set_weights_(zeros);
+
+  // If DTCM was previously used, re-copy the now-zero weights
+  if (dtcm::get_weights_used() > 0)
+    copy_weights_to_dtcm();
 }
 
 bool nam::wavenet::WaveNet::copy_weights_to_dtcm()

@@ -14,10 +14,12 @@ Timings g_timings;
 // CPU frequency in MHz (Daisy runs at 480 MHz)
 static constexpr uint32_t CPU_FREQ_MHZ = 480;
 
-uint32_t get_time_us() {
-  // DWT->CYCCNT gives cycle count
-  // Divide by CPU_FREQ_MHZ to get microseconds
-  return DWT->CYCCNT / CPU_FREQ_MHZ;
+uint32_t get_cycles() {
+  return DWT->CYCCNT;
+}
+
+uint32_t cycles_per_us() {
+  return CPU_FREQ_MHZ;
 }
 
 } // namespace profiling
@@ -32,11 +34,16 @@ namespace profiling {
 
 Timings g_timings;
 
-uint32_t get_time_us() {
+// On desktop, get_cycles() returns microseconds directly (cycles_per_us = 1)
+uint32_t get_cycles() {
   using namespace std::chrono;
   static auto start = high_resolution_clock::now();
   auto now = high_resolution_clock::now();
   return (uint32_t)duration_cast<microseconds>(now - start).count();
+}
+
+uint32_t cycles_per_us() {
+  return 1; // "cycles" are already microseconds on desktop
 }
 
 } // namespace profiling

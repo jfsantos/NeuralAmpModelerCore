@@ -620,16 +620,12 @@ void Conv1D::Process(const Eigen::MatrixXf& input, const int num_frames)
       }
       else
       {
-        // Fall back to Eigen for larger matrices where it's more efficient
-        if (_external_weights)
-        {
-          Eigen::Map<const Eigen::MatrixXf> weight_map(_external_weights + k * weight_matrix_size, out_ch, in_ch);
-          _output.leftCols(num_frames).noalias() += weight_map * input_block;
-        }
-        else
-        {
-          _output.leftCols(num_frames).noalias() += this->_weight[k] * input_block;
-        }
+        // Fallback to Eigen for remaining sizes.
+        // Sizes that reach here typically have one dimension = 1, so Eigen uses
+        // GEMV (no dynamic allocation). The specialized paths above cover
+        // common small sizes where both dims > 1.
+        Eigen::Map<const Eigen::MatrixXf> weight_map(weight_ptr, out_ch, in_ch);
+        _output.leftCols(num_frames).noalias() += weight_map * input_block.leftCols(num_frames);
       }
     }
     } // end else (general GEMM path)

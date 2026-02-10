@@ -705,6 +705,9 @@ public:
   /// \param weights Iterator to the weights vector. Will be advanced as weights are consumed.
   void set_weights_(std::vector<float>::iterator& weights);
 
+  /// \brief Zero all model weights (for debugging numerical issues)
+  void zero_weights() override;
+
   /// \brief Copy all model weights to DTCM buffer for faster access
   /// \return true if successful, false if buffer too small
   bool copy_weights_to_dtcm() override;

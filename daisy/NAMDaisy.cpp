@@ -290,6 +290,14 @@ static void AudioCallback(AudioHandle::InterleavingInputBuffer  in,
 int main(void)
 {
   hw.Init();
+
+  // Enable Flush-to-Zero (FZ) and Default-NaN (DN) on the FPU.
+  // Without this, subnormal floats trigger the slow exception path on Cortex-M7,
+  // causing 100-1000x slowdowns in models that produce near-zero intermediates.
+  uint32_t fpscr = __get_FPSCR();
+  fpscr |= (1U << 24) | (1U << 25);  // FZ | DN
+  __set_FPSCR(fpscr);
+
   hw.seed.StartLog(true);
   System::Delay(100);
 
