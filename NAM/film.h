@@ -69,6 +69,9 @@ public:
   /// \return Number of weight parameters
   long get_num_weights() const { return _cond_to_scale_shift.get_num_weights(); }
 
+  /// \brief Get storage size in floats for copy_weights_to_buffer
+  size_t get_weight_storage_size() const { return _cond_to_scale_shift.get_weight_storage_size(); }
+
   /// \brief Copy weights to an external buffer
   /// \param buffer Destination buffer
   /// \param buffer_size Size of buffer in floats

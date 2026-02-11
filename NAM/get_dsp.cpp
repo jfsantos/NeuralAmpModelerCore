@@ -93,14 +93,28 @@ std::vector<float> GetWeights(nlohmann::json const& j)
 
 std::unique_ptr<DSP> get_dsp(const std::filesystem::path config_filename)
 {
-  dspData temp;
-  return get_dsp(config_filename, temp);
+  if (!std::filesystem::exists(config_filename))
+    throw std::runtime_error("Config file doesn't exist!\n");
+  std::ifstream i(config_filename);
+  nlohmann::json j;
+  i >> j;
+
+  return get_dsp(j);
 }
 
 std::unique_ptr<DSP> get_dsp(const nlohmann::json& config)
 {
-  dspData temp;
-  return get_dsp(config, temp);
+  verify_config_version(config["version"].get<std::string>());
+
+  dspData conf;
+  conf.version = config["version"].get<std::string>();
+  conf.architecture = config["architecture"].get<std::string>();
+  conf.config = config["config"];
+  conf.metadata = config.value("metadata", nlohmann::json());
+  conf.weights = GetWeights(config);
+  conf.expected_sample_rate = get_sample_rate_from_nam_file(config);
+
+  return get_dsp(conf);
 }
 
 std::unique_ptr<DSP> get_dsp(const std::filesystem::path config_filename, dspData& returnedConfig)
@@ -110,37 +124,24 @@ std::unique_ptr<DSP> get_dsp(const std::filesystem::path config_filename, dspDat
   std::ifstream i(config_filename);
   nlohmann::json j;
   i >> j;
-  get_dsp(j, returnedConfig);
 
-  /*Copy to a new dsp_config object for get_dsp below,
-   since not sure if weights actually get modified as being non-const references on some
-   model constructors inside get_dsp(dsp_config& conf).
-   We need to return unmodified version of dsp_config via returnedConfig.*/
-  dspData conf = returnedConfig;
-
-  return get_dsp(conf);
+  return get_dsp(j, returnedConfig);
 }
 
 std::unique_ptr<DSP> get_dsp(const nlohmann::json& config, dspData& returnedConfig)
 {
   verify_config_version(config["version"].get<std::string>());
 
-  auto architecture = config["architecture"];
-  nlohmann::json config_json = config["config"];
-  std::vector<float> weights = GetWeights(config);
-
-  // Assign values to returnedConfig
+  // Populate returnedConfig directly from JSON (no intermediate copies)
   returnedConfig.version = config["version"].get<std::string>();
   returnedConfig.architecture = config["architecture"].get<std::string>();
-  returnedConfig.config = config_json;
+  returnedConfig.config = config["config"];
   returnedConfig.metadata = config.value("metadata", nlohmann::json());
-  returnedConfig.weights = weights;
+  returnedConfig.weights = GetWeights(config);
   returnedConfig.expected_sample_rate = nam::get_sample_rate_from_nam_file(config);
 
-  /*Copy to a new dsp_config object for get_dsp below,
-   since not sure if weights actually get modified as being non-const references on some
-   model constructors inside get_dsp(dsp_config& conf).
-   We need to return unmodified version of dsp_config via returnedConfig.*/
+  // Copy for model construction — model constructors take weights by
+  // non-const reference and may modify them, so preserve returnedConfig.
   dspData conf = returnedConfig;
 
   return get_dsp(conf);

@@ -851,9 +851,19 @@ long Conv1D::get_num_weights() const
   return num_weights;
 }
 
+size_t Conv1D::get_weight_storage_size() const
+{
+  size_t size = this->_bias.size();
+  if (this->_is_depthwise)
+    size += this->_channels * this->_depthwise_weight.size();
+  else if (this->_weight.size() > 0)
+    size += this->_weight[0].size() * this->_weight.size(); // full matrices including grouped zeros
+  return size;
+}
+
 size_t Conv1D::copy_weights_to_buffer(float* buffer, size_t buffer_size) const
 {
-  size_t total_size = (size_t)get_num_weights();
+  size_t total_size = get_weight_storage_size();
   if (total_size > buffer_size)
     return 0;
 

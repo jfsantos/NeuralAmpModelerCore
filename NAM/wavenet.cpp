@@ -733,7 +733,7 @@ std::unique_ptr<nam::DSP> nam::wavenet::Factory(const nlohmann::json& config, st
                                                 const double expectedSampleRate)
 {
   std::unique_ptr<nam::DSP> condition_dsp = nullptr;
-  if (config.find("condition_dsp") != config.end())
+  if (config.find("condition_dsp") != config.end() && !config["condition_dsp"].is_null())
   {
     const nlohmann::json& condition_dsp_json = config["condition_dsp"];
     condition_dsp = nam::get_dsp(condition_dsp_json);
@@ -1035,9 +1035,37 @@ size_t nam::wavenet::_Layer::get_weight_count() const
   return count;
 }
 
+size_t nam::wavenet::_Layer::get_weight_storage_count() const
+{
+  size_t count = 0;
+  count += this->_conv.get_weight_storage_size();
+  count += this->_input_mixin.get_weight_storage_size();
+  if (this->_layer1x1)
+    count += this->_layer1x1->get_weight_storage_size();
+  if (this->_head1x1)
+    count += this->_head1x1->get_weight_storage_size();
+  if (this->_conv_pre_film)
+    count += this->_conv_pre_film->get_weight_storage_size();
+  if (this->_conv_post_film)
+    count += this->_conv_post_film->get_weight_storage_size();
+  if (this->_input_mixin_pre_film)
+    count += this->_input_mixin_pre_film->get_weight_storage_size();
+  if (this->_input_mixin_post_film)
+    count += this->_input_mixin_post_film->get_weight_storage_size();
+  if (this->_activation_pre_film)
+    count += this->_activation_pre_film->get_weight_storage_size();
+  if (this->_activation_post_film)
+    count += this->_activation_post_film->get_weight_storage_size();
+  if (this->_layer1x1_post_film)
+    count += this->_layer1x1_post_film->get_weight_storage_size();
+  if (this->_head1x1_post_film)
+    count += this->_head1x1_post_film->get_weight_storage_size();
+  return count;
+}
+
 size_t nam::wavenet::_Layer::copy_weights_to_buffer(float* buffer, size_t buffer_size) const
 {
-  size_t total = get_weight_count();
+  size_t total = get_weight_storage_count();
   if (total > buffer_size)
     return 0;
 
@@ -1141,66 +1169,66 @@ size_t nam::wavenet::_Layer::use_external_weights(float* buffer)
 
   // Dilated convolution
   this->_conv.use_external_weights(buffer + offset);
-  offset += this->_conv.get_num_weights();
+  offset += this->_conv.get_weight_storage_size();
 
   // Input mixin
   this->_input_mixin.use_external_weights(buffer + offset);
-  offset += this->_input_mixin.get_num_weights();
+  offset += this->_input_mixin.get_weight_storage_size();
 
   // Optional layer1x1
   if (this->_layer1x1)
   {
     this->_layer1x1->use_external_weights(buffer + offset);
-    offset += this->_layer1x1->get_num_weights();
+    offset += this->_layer1x1->get_weight_storage_size();
   }
 
   // Optional head1x1
   if (this->_head1x1)
   {
     this->_head1x1->use_external_weights(buffer + offset);
-    offset += this->_head1x1->get_num_weights();
+    offset += this->_head1x1->get_weight_storage_size();
   }
 
   // FiLM objects
   if (this->_conv_pre_film)
   {
     this->_conv_pre_film->use_external_weights(buffer + offset);
-    offset += this->_conv_pre_film->get_num_weights();
+    offset += this->_conv_pre_film->get_weight_storage_size();
   }
   if (this->_conv_post_film)
   {
     this->_conv_post_film->use_external_weights(buffer + offset);
-    offset += this->_conv_post_film->get_num_weights();
+    offset += this->_conv_post_film->get_weight_storage_size();
   }
   if (this->_input_mixin_pre_film)
   {
     this->_input_mixin_pre_film->use_external_weights(buffer + offset);
-    offset += this->_input_mixin_pre_film->get_num_weights();
+    offset += this->_input_mixin_pre_film->get_weight_storage_size();
   }
   if (this->_input_mixin_post_film)
   {
     this->_input_mixin_post_film->use_external_weights(buffer + offset);
-    offset += this->_input_mixin_post_film->get_num_weights();
+    offset += this->_input_mixin_post_film->get_weight_storage_size();
   }
   if (this->_activation_pre_film)
   {
     this->_activation_pre_film->use_external_weights(buffer + offset);
-    offset += this->_activation_pre_film->get_num_weights();
+    offset += this->_activation_pre_film->get_weight_storage_size();
   }
   if (this->_activation_post_film)
   {
     this->_activation_post_film->use_external_weights(buffer + offset);
-    offset += this->_activation_post_film->get_num_weights();
+    offset += this->_activation_post_film->get_weight_storage_size();
   }
   if (this->_layer1x1_post_film)
   {
     this->_layer1x1_post_film->use_external_weights(buffer + offset);
-    offset += this->_layer1x1_post_film->get_num_weights();
+    offset += this->_layer1x1_post_film->get_weight_storage_size();
   }
   if (this->_head1x1_post_film)
   {
     this->_head1x1_post_film->use_external_weights(buffer + offset);
-    offset += this->_head1x1_post_film->get_num_weights();
+    offset += this->_head1x1_post_film->get_weight_storage_size();
   }
 
   return offset;
@@ -1223,9 +1251,19 @@ size_t nam::wavenet::_LayerArray::get_weight_count() const
   return count;
 }
 
+size_t nam::wavenet::_LayerArray::get_weight_storage_count() const
+{
+  size_t count = 0;
+  count += this->_rechannel.get_weight_storage_size();
+  for (const auto& layer : this->_layers)
+    count += layer.get_weight_storage_count();
+  count += this->_head_rechannel.get_weight_storage_size();
+  return count;
+}
+
 size_t nam::wavenet::_LayerArray::copy_weights_to_buffer(float* buffer, size_t buffer_size) const
 {
-  size_t total = get_weight_count();
+  size_t total = get_weight_storage_count();
   if (total > buffer_size)
     return 0;
 
@@ -1262,7 +1300,7 @@ size_t nam::wavenet::_LayerArray::use_external_weights(float* buffer)
 
   // Rechannel
   this->_rechannel.use_external_weights(buffer + offset);
-  offset += this->_rechannel.get_num_weights();
+  offset += this->_rechannel.get_weight_storage_size();
 
   // Layers
   for (auto& layer : this->_layers)
@@ -1272,7 +1310,7 @@ size_t nam::wavenet::_LayerArray::use_external_weights(float* buffer)
 
   // Head rechannel
   this->_head_rechannel.use_external_weights(buffer + offset);
-  offset += this->_head_rechannel.get_num_weights();
+  offset += this->_head_rechannel.get_weight_storage_size();
 
   return offset;
 }
@@ -1317,31 +1355,29 @@ bool nam::wavenet::WaveNet::copy_weights_to_dtcm()
   // Reset the allocator before copying new weights
   dtcm::reset_weight_allocator();
 
-  size_t total_weights = get_total_weight_count();
-  size_t available = dtcm::get_weights_available();
+  // Use storage count (not logical weight count) — grouped convolutions store
+  // full matrices with zeros in off-diagonal blocks, so storage > num_weights.
+  size_t total_storage = 0;
+  for (const auto& layer_array : this->_layer_arrays)
+    total_storage += layer_array.get_weight_storage_count();
+  total_storage += 1; // head scale
 
-  if (total_weights > available)
+  size_t available = dtcm::get_weights_available();
+  if (total_storage > available)
     return false;
 
   // Allocate space for all weights
-  float* buffer = dtcm::allocate_weights(total_weights);
+  float* buffer = dtcm::allocate_weights(total_storage);
   if (buffer == nullptr)
     return false;
 
   size_t offset = 0;
 
-  // Copy condition DSP weights (if present)
-  if (this->_condition_dsp)
-  {
-    // For now, condition DSP doesn't have copy_weights_to_buffer
-    // This is a limitation - condition DSP weights stay in regular memory
-  }
-
   // Copy layer array weights
   for (const auto& layer_array : this->_layer_arrays)
   {
-    size_t written = layer_array.copy_weights_to_buffer(buffer + offset, total_weights - offset);
-    if (written == 0 && layer_array.get_weight_count() > 0)
+    size_t written = layer_array.copy_weights_to_buffer(buffer + offset, total_storage - offset);
+    if (written == 0 && layer_array.get_weight_storage_count() > 0)
       return false;
     offset += written;
   }

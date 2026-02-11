@@ -17,6 +17,7 @@
 
 constexpr const long _INPUT_BUFFER_SAFETY_FACTOR = 32;
 
+
 nam::DSP::DSP(const int in_channels, const int out_channels, const double expected_sample_rate)
 : mExpectedSampleRate(expected_sample_rate)
 , mInChannels(in_channels)
@@ -755,9 +756,19 @@ long nam::Conv1x1::get_num_weights() const
   return num_weights;
 }
 
+size_t nam::Conv1x1::get_weight_storage_size() const
+{
+  size_t size = this->_do_bias ? this->_bias.size() : 0;
+  if (this->_is_depthwise)
+    size += this->_channels;
+  else if (this->_weight.size() > 0)
+    size += this->_weight.size(); // full matrix including grouped zeros
+  return size;
+}
+
 size_t nam::Conv1x1::copy_weights_to_buffer(float* buffer, size_t buffer_size) const
 {
-  size_t total_size = (size_t)get_num_weights();
+  size_t total_size = get_weight_storage_size();
   if (total_size > buffer_size)
     return 0;
 

@@ -113,9 +113,13 @@ public:
   /// \return Kernel size
   long get_kernel_size() const;
 
-  /// \brief Get the total number of weights
-  /// \return Total number of weight parameters
+  /// \brief Get the number of logical weight parameters (for JSON loading)
+  /// \return Number of weight parameters (reduced by groups for grouped convolutions)
   long get_num_weights() const;
+
+  /// \brief Get the storage size in floats for copy_weights_to_buffer
+  /// \return Number of floats that copy_weights_to_buffer will write
+  size_t get_weight_storage_size() const;
 
   /// \brief Get the number of output channels
   /// \return Number of output channels

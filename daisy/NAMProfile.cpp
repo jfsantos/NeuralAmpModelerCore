@@ -12,6 +12,7 @@
 
 #include <cstdio>
 #include <cstring>
+#include <malloc.h>
 
 #include "daisy_pod.h"
 #include "fatfs.h"
@@ -45,7 +46,7 @@ static char s_folders[MAX_FOLDERS][MAX_FOLDER_NAME_LEN];
 static size_t s_numFolders = 0;
 
 // Per-folder .nam file list (full paths like "/folder/model.nam")
-static constexpr size_t MAX_NAM_FILES = 32;
+static constexpr size_t MAX_NAM_FILES = 64;
 static constexpr size_t MAX_PATH_LEN = 128;
 static char s_namFiles[MAX_NAM_FILES][MAX_PATH_LEN];
 static size_t s_numNamFiles = 0;
@@ -322,13 +323,53 @@ void ProfileModel(int index)
   Printf("");
   Printf("--- [%d/%d] %s ---", index + 1, (int)s_numNamFiles, filename);
 
+  // Heap diagnostics before loading
+  {
+    struct mallinfo mi = mallinfo();
+    Printf("  Heap before load: used=%lu free=%lu (arena=%lu)",
+           (unsigned long)mi.uordblks, (unsigned long)mi.fordblks, (unsigned long)mi.arena);
+  }
+
+  // Print progress marker and flush BEFORE loading, so if the board crashes
+  // during loading the log will show which model caused it.
+  Printf("  Loading...");
+  SyncLogFile();
+
   // Load model
   std::unique_ptr<nam::DSP> model = nam::get_dsp_fatfs(fullPath);
+
+  // Report phase timings (available even on failure)
+  {
+    nam::LoadTiming timing = nam::get_dsp_fatfs_timing();
+    Printf("  Load phases: SD read %lu ms, JSON parse %lu ms, model create %lu ms",
+           (unsigned long)(timing.sd_read_us / 1000),
+           (unsigned long)(timing.json_parse_us / 1000),
+           (unsigned long)(timing.model_create_us / 1000));
+  }
+
   if (!model)
   {
     Printf("  SKIP: %s", nam::get_dsp_fatfs_error_string(nam::get_dsp_fatfs_last_error()));
     SyncLogFile();
     return;
+  }
+
+  // Report SDRAM arena usage from JSON parsing
+  {
+    size_t peak = nam::get_dsp_fatfs_arena_peak();
+    size_t overflows = nam::get_dsp_fatfs_arena_overflows();
+    if (peak > 0)
+    {
+      Printf("  SDRAM arena: %lu KB peak", (unsigned long)(peak / 1024));
+      if (overflows > 0)
+      {
+        Printf("  SDRAM arena: %lu allocation(s) overflowed to heap", (unsigned long)overflows);
+      }
+    }
+    else
+    {
+      Printf("  SDRAM arena: not used");
+    }
   }
 
   // Copy weights to DTCM (copy_weights_to_dtcm resets the allocator internally)
@@ -342,7 +383,9 @@ void ProfileModel(int index)
     }
     else
     {
-      Printf("  DTCM: copy failed (%lu weights, %lu available) - using main RAM",
+      size_t used = nam::dtcm::get_weights_used();
+      Printf("  DTCM: failed (%lu/%lu used, %lu max) - using main RAM",
+             (unsigned long)used,
              (unsigned long)weight_count,
              (unsigned long)nam::dtcm::WEIGHT_BUFFER_SIZE);
     }
@@ -368,6 +411,10 @@ void ProfileModel(int index)
 
   // Reset profiling counters
   nam::profiling::reset();
+
+  // Flush before benchmark so crash during processing is distinguishable from loading stall
+  Printf("  Benchmarking...");
+  SyncLogFile();
 
   // Benchmark: process NUM_SECONDS of audio
   // Accumulate cycle counts per-buffer into a 64-bit total to handle DWT wrap.
@@ -432,6 +479,13 @@ void ProfileModel(int index)
 
   // Release model before loading the next one
   model.reset();
+
+  // Heap diagnostics after model destruction
+  {
+    struct mallinfo mi = mallinfo();
+    Printf("  Heap after free: used=%lu free=%lu",
+           (unsigned long)mi.uordblks, (unsigned long)mi.fordblks);
+  }
 
   // Flush log after each model in case of crash
   SyncLogFile();
@@ -508,6 +562,7 @@ int main(void)
 
   // Enable fast tanh approximation (same as real-time pedal)
   nam::activations::Activation::enable_fast_tanh();
+
 
   // Scan root for folders
   PrintLine("Scanning for folders...");

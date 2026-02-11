@@ -376,9 +376,13 @@ public:
   /// \return Const reference to the internal Conv1D object
   const Conv1D& get_conv() const { return _conv; }
 
-  /// \brief Get total weight count for this layer
+  /// \brief Get total weight count for this layer (logical parameters for JSON)
   /// \return Total number of float weights
   size_t get_weight_count() const;
+
+  /// \brief Get total storage size for copy_weights_to_buffer
+  /// \return Number of floats that copy_weights_to_buffer will write
+  size_t get_weight_storage_count() const;
 
   /// \brief Copy weights to buffer
   /// \param buffer Destination buffer
@@ -610,9 +614,13 @@ public:
   /// \param it Iterator to the weights vector. Will be advanced as weights are consumed.
   void set_weights_(std::vector<float>::iterator& it);
 
-  /// \brief Get total weight count for this layer array
+  /// \brief Get total weight count for this layer array (logical parameters for JSON)
   /// \return Total number of float weights
   size_t get_weight_count() const;
+
+  /// \brief Get total storage size for copy_weights_to_buffer
+  /// \return Number of floats that copy_weights_to_buffer will write
+  size_t get_weight_storage_count() const;
 
   /// \brief Copy weights to buffer
   /// \param buffer Destination buffer

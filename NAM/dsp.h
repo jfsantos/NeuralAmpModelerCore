@@ -22,6 +22,7 @@
 
 namespace nam
 {
+
 namespace wavenet
 {
 /// Forward declaration to allow WaveNet to access protected members of DSP
@@ -350,9 +351,16 @@ public:
   long get_out_channels() const;
   long get_in_channels() const;
 
-  /// \brief Get the total number of weights in this layer
-  /// \return Number of weight parameters
+  /// \brief Get the number of logical weight parameters (for JSON loading)
+  /// \return Number of weight parameters (reduced by groups for grouped convolutions)
   long get_num_weights() const;
+
+  /// \brief Get the storage size in floats for copy_weights_to_buffer
+  ///
+  /// For grouped convolutions, the weight matrix is stored at full size
+  /// (with zeros in off-diagonal blocks), so storage size > num_weights.
+  /// \return Number of floats that copy_weights_to_buffer will write
+  size_t get_weight_storage_size() const;
 
   /// \brief Copy weights to an external buffer
   ///
