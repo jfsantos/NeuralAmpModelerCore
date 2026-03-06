@@ -27,6 +27,17 @@ endif()
 set(NAM_DEPS_PATH "${CMAKE_CURRENT_SOURCE_DIR}/Dependencies")
 include_directories(SYSTEM "${NAM_DEPS_PATH}/eigen")
 
+# Per-operation tuning config: path to auto-generated header from nam_autotune
+set(NAM_TUNING_CONFIG "" CACHE FILEPATH "Path to auto-generated tuning config header (from nam_autotune)")
+if(NAM_TUNING_CONFIG)
+  get_filename_component(NAM_TUNING_CONFIG_DIR "${NAM_TUNING_CONFIG}" DIRECTORY)
+  add_compile_definitions(NAM_TUNING_CONFIG)
+  # Add the config directory to include path so #include "nam_tuning_config.h" works
+  include_directories("${NAM_TUNING_CONFIG_DIR}")
+  # Also force-include the config header so macros are set before any source compilation
+  add_compile_options("-include" "${NAM_TUNING_CONFIG}")
+endif()
+
 add_subdirectory(tools)
 
 #file(MAKE_DIRECTORY build/tools)

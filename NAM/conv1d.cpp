@@ -2,6 +2,13 @@
 #include <cstring>
 #include <stdexcept>
 
+#ifdef NAM_USE_INLINE_GEMM
+#ifdef NAM_TUNING_CONFIG
+#include "nam_tuning_config.h"
+#endif
+#include "nam_tuning_defaults.h"
+#endif
+
 namespace nam
 {
 // Conv1D =====================================================================
@@ -177,6 +184,7 @@ void Conv1D::Process(const Eigen::MatrixXf& input, const int num_frames)
       const float* __restrict__ weight_ptr = this->_depthwise_weight[k].data();
 
       // Specialized paths for common channel counts
+#if NAM_INLINE_CONV1D_DW_4
       if (channels == 4)
       {
         const float w0 = weight_ptr[0], w1 = weight_ptr[1];
@@ -190,7 +198,10 @@ void Conv1D::Process(const Eigen::MatrixXf& input, const int num_frames)
           output_ptr[off + 3] += w3 * input_ptr[off + 3];
         }
       }
-      else if (channels == 8)
+      else
+#endif
+#if NAM_INLINE_CONV1D_DW_8
+      if (channels == 8)
       {
         const float w0 = weight_ptr[0], w1 = weight_ptr[1], w2 = weight_ptr[2], w3 = weight_ptr[3];
         const float w4 = weight_ptr[4], w5 = weight_ptr[5], w6 = weight_ptr[6], w7 = weight_ptr[7];
@@ -207,7 +218,10 @@ void Conv1D::Process(const Eigen::MatrixXf& input, const int num_frames)
           output_ptr[off + 7] += w7 * input_ptr[off + 7];
         }
       }
-      else if (channels == 3)
+      else
+#endif
+#if NAM_INLINE_CONV1D_DW_3
+      if (channels == 3)
       {
         const float w0 = weight_ptr[0], w1 = weight_ptr[1], w2 = weight_ptr[2];
         for (int f = 0; f < num_frames; f++)
@@ -219,7 +233,9 @@ void Conv1D::Process(const Eigen::MatrixXf& input, const int num_frames)
         }
       }
       else
+#endif
       {
+#if NAM_INLINE_GENERIC_FALLBACK
         // General depthwise path with loop unrolling
         for (int f = 0; f < num_frames; f++)
         {
@@ -237,6 +253,10 @@ void Conv1D::Process(const Eigen::MatrixXf& input, const int num_frames)
             output_ptr[off + c] += weight_ptr[c] * input_ptr[off + c];
           }
         }
+#else
+        _output.leftCols(num_frames).noalias() +=
+          this->_depthwise_weight[k].asDiagonal() * input_block.leftCols(num_frames);
+#endif
       }
     }
 #else
@@ -261,13 +281,14 @@ void Conv1D::Process(const Eigen::MatrixXf& input, const int num_frames)
     //   output(o, f) is at output_ptr[f * out_ch + o]
     //   weight(o, i) is at weight_ptr[i * out_ch + o]
     //   input(i, f) is at input_ptr[f * in_ch + i]
-    const int out_ch = (int)get_out_channels();
-    const int in_ch = (int)get_in_channels();
+    const int out_ch __attribute__((unused)) = (int)get_out_channels();
+    const int in_ch __attribute__((unused)) = (int)get_in_channels();
     const size_t kernel_size = this->_weight.size();
-    const size_t weight_matrix_size = out_ch * in_ch;
+    (void)kernel_size; // may be unused if all fused kernels disabled
 
-    // Fused kernel optimization for kernel_size=3
-    // Instead of 3 separate passes over output, fuse into single pass
+    // Fused kernel optimization: process all kernel taps in a single pass.
+    // When a fused kernel macro is disabled, it falls through to the per-tap path.
+#if NAM_INLINE_CONV1D_FUSED_3_4x4
     if (kernel_size == 3 && out_ch == 4 && in_ch == 4)
     {
       // Fused 4x4 kernel_size=3: read all 3 input blocks and compute in one pass
@@ -282,7 +303,6 @@ void Conv1D::Process(const Eigen::MatrixXf& input, const int num_frames)
       float* __restrict__ output_ptr = _output.data();
 
       // Get weight pointers for all 3 taps
-      const size_t wsize = 16;  // 4x4
       const float* __restrict__ w0 = this->_weight[0].data();
       const float* __restrict__ w1 = this->_weight[1].data();
       const float* __restrict__ w2 = this->_weight[2].data();
@@ -326,7 +346,10 @@ void Conv1D::Process(const Eigen::MatrixXf& input, const int num_frames)
                               + (w2_30 * i2_0 + w2_31 * i2_1 + w2_32 * i2_2 + w2_33 * i2_3);
       }
     }
-    else if (kernel_size == 3 && out_ch == 2 && in_ch == 2)
+    else
+#endif
+#if NAM_INLINE_CONV1D_FUSED_3_2x2
+    if (kernel_size == 3 && out_ch == 2 && in_ch == 2)
     {
       // Fused 2x2 kernel_size=3: read all 3 input blocks and compute in one pass
       const long dil = this->_dilation;
@@ -360,7 +383,10 @@ void Conv1D::Process(const Eigen::MatrixXf& input, const int num_frames)
           (w0_10 * i0_0 + w0_11 * i0_1) + (w1_10 * i1_0 + w1_11 * i1_1) + (w2_10 * i2_0 + w2_11 * i2_1);
       }
     }
-    else if (kernel_size == 6 && out_ch == 3 && in_ch == 3)
+    else
+#endif
+#if NAM_INLINE_CONV1D_FUSED_6_3x3
+    if (kernel_size == 6 && out_ch == 3 && in_ch == 3)
     {
       // Fused 3x3 kernel_size=6: read all 6 input blocks and compute in one pass
       const long dil = this->_dilation;
@@ -407,23 +433,25 @@ void Conv1D::Process(const Eigen::MatrixXf& input, const int num_frames)
       }
     }
     else
+#endif
     {
-    // General inline GEMM path uses += accumulation, so needs setZero
+    // Per-tap GEMM path: uses += accumulation, so needs setZero
     _output.leftCols(num_frames).setZero();
 
-    // General inline GEMM path for other configurations
+    // Per-tap inline GEMM path for other configurations
     for (size_t k = 0; k < kernel_size; k++)
     {
       const long offset = this->_dilation * (k + 1 - (long)kernel_size);
       const long lookback = -offset;
       auto input_block = _input_buffer.Read(num_frames, lookback);
 
-      const float* __restrict__ input_ptr = input_block.data();
-      const float* __restrict__ weight_ptr = this->_weight[k].data();
-      float* __restrict__ output_ptr = _output.data();
+      const float* __restrict__ input_ptr __attribute__((unused)) = input_block.data();
+      const float* __restrict__ weight_ptr __attribute__((unused)) = this->_weight[k].data();
+      float* __restrict__ output_ptr __attribute__((unused)) = _output.data();
 
       // Specialized fully-unrolled paths for common small channel counts
       // These avoid all loop overhead for the tiny matrices in NAM models
+#if NAM_INLINE_CONV1D_2x2
       if (out_ch == 2 && in_ch == 2)
       {
         // 2x2 fully unrolled
@@ -437,7 +465,10 @@ void Conv1D::Process(const Eigen::MatrixXf& input, const int num_frames)
           output_ptr[f * 2 + 1] += w10 * i0 + w11 * i1;
         }
       }
-      else if (out_ch == 2 && in_ch == 4)
+      else
+#endif
+#if NAM_INLINE_CONV1D_2x4
+      if (out_ch == 2 && in_ch == 4)
       {
         // 2x4 fully unrolled
         const float w00 = weight_ptr[0], w10 = weight_ptr[1];
@@ -454,7 +485,10 @@ void Conv1D::Process(const Eigen::MatrixXf& input, const int num_frames)
           output_ptr[f * 2 + 1] += w10 * i0 + w11 * i1 + w12 * i2 + w13 * i3;
         }
       }
-      else if (out_ch == 4 && in_ch == 1)
+      else
+#endif
+#if NAM_INLINE_CONV1D_4x1
+      if (out_ch == 4 && in_ch == 1)
       {
         // 4x1 fully unrolled
         const float w0 = weight_ptr[0], w1 = weight_ptr[1];
@@ -468,7 +502,10 @@ void Conv1D::Process(const Eigen::MatrixXf& input, const int num_frames)
           output_ptr[f * 4 + 3] += w3 * in_val;
         }
       }
-      else if (out_ch == 4 && in_ch == 4)
+      else
+#endif
+#if NAM_INLINE_CONV1D_4x4
+      if (out_ch == 4 && in_ch == 4)
       {
         // 4x4 fully unrolled - cache weights in registers
         const float w00 = weight_ptr[0], w10 = weight_ptr[1], w20 = weight_ptr[2], w30 = weight_ptr[3];
@@ -489,7 +526,10 @@ void Conv1D::Process(const Eigen::MatrixXf& input, const int num_frames)
           output_ptr[out_off + 3] += w30 * i0 + w31 * i1 + w32 * i2 + w33 * i3;
         }
       }
-      else if (out_ch == 3 && in_ch == 1)
+      else
+#endif
+#if NAM_INLINE_CONV1D_3x1
+      if (out_ch == 3 && in_ch == 1)
       {
         // 3x1 fully unrolled
         const float w0 = weight_ptr[0], w1 = weight_ptr[1], w2 = weight_ptr[2];
@@ -501,7 +541,10 @@ void Conv1D::Process(const Eigen::MatrixXf& input, const int num_frames)
           output_ptr[f * 3 + 2] += w2 * in_val;
         }
       }
-      else if (out_ch == 3 && in_ch == 3)
+      else
+#endif
+#if NAM_INLINE_CONV1D_3x3
+      if (out_ch == 3 && in_ch == 3)
       {
         // 3x3 fully unrolled
         const float w00 = weight_ptr[0], w10 = weight_ptr[1], w20 = weight_ptr[2];
@@ -518,7 +561,10 @@ void Conv1D::Process(const Eigen::MatrixXf& input, const int num_frames)
           output_ptr[off + 2] += w20 * i0 + w21 * i1 + w22 * i2;
         }
       }
-      else if (out_ch == 4 && in_ch == 3)
+      else
+#endif
+#if NAM_INLINE_CONV1D_4x3
+      if (out_ch == 4 && in_ch == 3)
       {
         // 4x3 fully unrolled
         const float w00 = weight_ptr[0], w10 = weight_ptr[1], w20 = weight_ptr[2], w30 = weight_ptr[3];
@@ -535,7 +581,10 @@ void Conv1D::Process(const Eigen::MatrixXf& input, const int num_frames)
           output_ptr[f * 4 + 3] += w30 * i0 + w31 * i1 + w32 * i2;
         }
       }
-      else if (out_ch == 3 && in_ch == 4)
+      else
+#endif
+#if NAM_INLINE_CONV1D_3x4
+      if (out_ch == 3 && in_ch == 4)
       {
         // 3x4 fully unrolled
         const float w00 = weight_ptr[0], w10 = weight_ptr[1], w20 = weight_ptr[2];
@@ -553,7 +602,10 @@ void Conv1D::Process(const Eigen::MatrixXf& input, const int num_frames)
           output_ptr[f * 3 + 2] += w20 * i0 + w21 * i1 + w22 * i2 + w23 * i3;
         }
       }
-      else if (out_ch == 6 && in_ch == 1)
+      else
+#endif
+#if NAM_INLINE_CONV1D_6x1
+      if (out_ch == 6 && in_ch == 1)
       {
         // 6x1 fully unrolled
         const float w0 = weight_ptr[0], w1 = weight_ptr[1], w2 = weight_ptr[2];
@@ -570,7 +622,10 @@ void Conv1D::Process(const Eigen::MatrixXf& input, const int num_frames)
           output_ptr[off + 5] += w5 * in_val;
         }
       }
-      else if (out_ch == 6 && in_ch == 6)
+      else
+#endif
+#if NAM_INLINE_CONV1D_6x6
+      if (out_ch == 6 && in_ch == 6)
       {
         // 6x6 - unroll weights, loop over frames
         for (int f = 0; f < num_frames; f++)
@@ -586,7 +641,10 @@ void Conv1D::Process(const Eigen::MatrixXf& input, const int num_frames)
           }
         }
       }
-      else if (out_ch == 8 && in_ch == 8)
+      else
+#endif
+#if NAM_INLINE_CONV1D_8x8
+      if (out_ch == 8 && in_ch == 8)
       {
         // 8x8 - unroll weights, loop over frames
         for (int f = 0; f < num_frames; f++)
@@ -604,12 +662,13 @@ void Conv1D::Process(const Eigen::MatrixXf& input, const int num_frames)
         }
       }
       else
+#endif
       {
         // Fall back to Eigen for larger matrices where it's more efficient
         _output.leftCols(num_frames).noalias() += this->_weight[k] * input_block;
       }
     }
-    } // end else (general GEMM path)
+    } // end per-tap GEMM path
 #else
     // Eigen fallback uses += accumulation, so needs setZero
     _output.leftCols(num_frames).setZero();

@@ -58,6 +58,30 @@ if(ENABLE_ASSERT_TEST)
 	target_compile_definitions(run_tests PRIVATE ADDASSERT)
 endif()
 
+# Auto-tuning benchmark tool
+option(NAM_BUILD_AUTOTUNE "Build the auto-tuning benchmark (nam_autotune)" OFF)
+if(NAM_BUILD_AUTOTUNE)
+  add_executable(nam_autotune autotune.cpp)
+  target_include_directories(nam_autotune PRIVATE ${NAM_DEPS_PATH}/eigen)
+  target_compile_features(nam_autotune PUBLIC cxx_std_17)
+  set_target_properties(nam_autotune PROPERTIES
+    CXX_VISIBILITY_PRESET hidden
+    INTERPROCEDURAL_OPTIMIZATION TRUE
+    PREFIX ""
+  )
+  if(MSVC)
+    target_compile_options(nam_autotune PRIVATE "$<$<CONFIG:RELEASE>:/O2>")
+  else()
+    target_compile_options(nam_autotune PRIVATE -O3 -ffast-math -DNDEBUG -DEIGEN_DONT_PARALLELIZE)
+    # Use native architecture for best benchmark results
+    include(CheckCXXCompilerFlag)
+    check_cxx_compiler_flag("-march=native" HAS_MARCH_NATIVE)
+    if(HAS_MARCH_NATIVE)
+      target_compile_options(nam_autotune PRIVATE -march=native)
+    endif()
+  endif()
+endif()
+
 source_group(NAM ${CMAKE_CURRENT_SOURCE_DIR} FILES ${NAM_SOURCES})
 
 target_compile_features(${TOOLS} PUBLIC cxx_std_20)

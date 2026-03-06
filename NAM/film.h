@@ -6,6 +6,13 @@
 
 #include "dsp.h"
 
+#ifdef NAM_USE_INLINE_GEMM
+#ifdef NAM_TUNING_CONFIG
+#include "nam_tuning_config.h"
+#endif
+#include "nam_tuning_defaults.h"
+#endif
+
 namespace nam
 {
 /// \brief Feature-wise Linear Modulation (FiLM)
@@ -86,7 +93,8 @@ public:
 
 #ifdef NAM_USE_INLINE_GEMM
     // Optimized inline FiLM operation
-    const int input_dim = (int)get_input_dim();
+    const int input_dim __attribute__((unused)) = (int)get_input_dim();
+#if NAM_INLINE_FILM_3 || NAM_INLINE_GENERIC_FALLBACK
     const float* __restrict__ input_ptr = input.data();
     const float* __restrict__ scale_shift_ptr = scale_shift.data();
     float* __restrict__ output_ptr = _output.data();
@@ -94,10 +102,12 @@ public:
     // Use outerStride() instead of rows() to correctly handle non-contiguous
     // block expressions (e.g. topRows()) where outerStride > rows
     const int input_stride = (int)input.outerStride();
+#endif
 
     if (_do_shift)
     {
       // scale = top input_dim rows, shift = bottom input_dim rows
+#if NAM_INLINE_FILM_3
       if (input_dim == 3)
       {
         for (int f = 0; f < num_frames; f++)
@@ -112,7 +122,9 @@ public:
         }
       }
       else
+#endif
       {
+#if NAM_INLINE_GENERIC_FALLBACK
         for (int f = 0; f < num_frames; f++)
         {
           const float* __restrict__ in_col = input_ptr + f * input_stride;
@@ -133,11 +145,17 @@ public:
             out_col[i] = in_col[i] * scale_col[i] + shift_col[i];
           }
         }
+#else
+        const auto scale_fb = scale_shift.topRows(get_input_dim()).leftCols(num_frames);
+        const auto shift_fb = scale_shift.bottomRows(get_input_dim()).leftCols(num_frames);
+        _output.leftCols(num_frames).array() = input.leftCols(num_frames).array() * scale_fb.array() + shift_fb.array();
+#endif
       }
     }
     else
     {
       // scale only
+#if NAM_INLINE_FILM_3
       if (input_dim == 3)
       {
         for (int f = 0; f < num_frames; f++)
@@ -151,7 +169,9 @@ public:
         }
       }
       else
+#endif
       {
+#if NAM_INLINE_GENERIC_FALLBACK
         for (int f = 0; f < num_frames; f++)
         {
           const float* __restrict__ in_col = input_ptr + f * input_stride;
@@ -171,6 +191,10 @@ public:
             out_col[i] = in_col[i] * scale_col[i];
           }
         }
+#else
+        const auto scale_fb = scale_shift.topRows(get_input_dim()).leftCols(num_frames);
+        _output.leftCols(num_frames).array() = input.leftCols(num_frames).array() * scale_fb.array();
+#endif
       }
     }
 #else

@@ -480,18 +480,29 @@ void nam::Conv1x1::process_(const Eigen::Ref<const Eigen::MatrixXf>& input, cons
   else
   {
 #ifdef NAM_USE_INLINE_GEMM
+#ifdef NAM_TUNING_CONFIG
+#include "nam_tuning_config.h"
+#endif
+#include "nam_tuning_defaults.h"
     // Hand-optimized GEMM for small matrices (1x1 convolution)
     // output(out_ch, frames) = weight(out_ch, in_ch) * input(in_ch, frames)
-    const int out_ch = (int)get_out_channels();
-    const int in_ch = (int)get_in_channels();
-    const float* __restrict__ input_ptr = input.data();
-    const float* __restrict__ weight_ptr = this->_weight.data();
-    float* __restrict__ output_ptr = _output.data();
+    //
+    // Each specialization is guarded by a per-operation tuning macro.
+    // When a macro is 0, the branch is removed at compile time and the
+    // size falls through to the generic fallback (or Eigen if that is also disabled).
+    // Variables used by inline specializations below.
+    // When all specialization macros are 0, these may be unused (Eigen fallback only).
+    const int out_ch __attribute__((unused)) = (int)get_out_channels();
+    const int in_ch __attribute__((unused)) = (int)get_in_channels();
+    const float* __restrict__ input_ptr __attribute__((unused)) = input.data();
+    const float* __restrict__ weight_ptr __attribute__((unused)) = this->_weight.data();
+    float* __restrict__ output_ptr __attribute__((unused)) = _output.data();
     // Use outerStride() instead of in_ch to correctly handle non-contiguous
     // block expressions (e.g. topRows()) where outerStride > rows
-    const int in_stride = (int)input.outerStride();
+    const int in_stride __attribute__((unused)) = (int)input.outerStride();
 
     // Specialized paths for common small sizes
+#if NAM_INLINE_CONV1X1_2x1
     if (out_ch == 2 && in_ch == 1)
     {
       const float w0 = weight_ptr[0], w1 = weight_ptr[1];
@@ -502,7 +513,10 @@ void nam::Conv1x1::process_(const Eigen::Ref<const Eigen::MatrixXf>& input, cons
         output_ptr[f * 2 + 1] = w1 * in_val;
       }
     }
-    else if (out_ch == 3 && in_ch == 1)
+    else
+#endif
+#if NAM_INLINE_CONV1X1_3x1
+    if (out_ch == 3 && in_ch == 1)
     {
       const float w0 = weight_ptr[0], w1 = weight_ptr[1], w2 = weight_ptr[2];
       for (int f = 0; f < num_frames; f++)
@@ -513,7 +527,10 @@ void nam::Conv1x1::process_(const Eigen::Ref<const Eigen::MatrixXf>& input, cons
         output_ptr[f * 3 + 2] = w2 * in_val;
       }
     }
-    else if (out_ch == 4 && in_ch == 1)
+    else
+#endif
+#if NAM_INLINE_CONV1X1_4x1
+    if (out_ch == 4 && in_ch == 1)
     {
       const float w0 = weight_ptr[0], w1 = weight_ptr[1];
       const float w2 = weight_ptr[2], w3 = weight_ptr[3];
@@ -526,7 +543,10 @@ void nam::Conv1x1::process_(const Eigen::Ref<const Eigen::MatrixXf>& input, cons
         output_ptr[f * 4 + 3] = w3 * in_val;
       }
     }
-    else if (out_ch == 1 && in_ch == 2)
+    else
+#endif
+#if NAM_INLINE_CONV1X1_1x2
+    if (out_ch == 1 && in_ch == 2)
     {
       const float w0 = weight_ptr[0], w1 = weight_ptr[1];
       for (int f = 0; f < num_frames; f++)
@@ -535,7 +555,10 @@ void nam::Conv1x1::process_(const Eigen::Ref<const Eigen::MatrixXf>& input, cons
         output_ptr[f] = w0 * in_col[0] + w1 * in_col[1];
       }
     }
-    else if (out_ch == 1 && in_ch == 3)
+    else
+#endif
+#if NAM_INLINE_CONV1X1_1x3
+    if (out_ch == 1 && in_ch == 3)
     {
       const float w0 = weight_ptr[0], w1 = weight_ptr[1], w2 = weight_ptr[2];
       if (this->_do_bias)
@@ -557,7 +580,10 @@ void nam::Conv1x1::process_(const Eigen::Ref<const Eigen::MatrixXf>& input, cons
         }
       }
     }
-    else if (out_ch == 2 && in_ch == 2)
+    else
+#endif
+#if NAM_INLINE_CONV1X1_2x2
+    if (out_ch == 2 && in_ch == 2)
     {
       // 2x2 fully unrolled
       const float w00 = weight_ptr[0], w10 = weight_ptr[1];
@@ -571,7 +597,10 @@ void nam::Conv1x1::process_(const Eigen::Ref<const Eigen::MatrixXf>& input, cons
         output_ptr[f * 2 + 1] = w10 * i0 + w11 * i1;
       }
     }
-    else if (out_ch == 2 && in_ch == 4)
+    else
+#endif
+#if NAM_INLINE_CONV1X1_2x4
+    if (out_ch == 2 && in_ch == 4)
     {
       const float w00 = weight_ptr[0], w10 = weight_ptr[1];
       const float w01 = weight_ptr[2], w11 = weight_ptr[3];
@@ -588,7 +617,10 @@ void nam::Conv1x1::process_(const Eigen::Ref<const Eigen::MatrixXf>& input, cons
         output_ptr[f * 2 + 1] = w10 * i0 + w11 * i1 + w12 * i2 + w13 * i3;
       }
     }
-    else if (out_ch == 1 && in_ch == 4)
+    else
+#endif
+#if NAM_INLINE_CONV1X1_1x4
+    if (out_ch == 1 && in_ch == 4)
     {
       const float w0 = weight_ptr[0], w1 = weight_ptr[1];
       const float w2 = weight_ptr[2], w3 = weight_ptr[3];
@@ -599,7 +631,10 @@ void nam::Conv1x1::process_(const Eigen::Ref<const Eigen::MatrixXf>& input, cons
                       + w2 * in_col[2] + w3 * in_col[3];
       }
     }
-    else if (out_ch == 4 && in_ch == 2)
+    else
+#endif
+#if NAM_INLINE_CONV1X1_4x2
+    if (out_ch == 4 && in_ch == 2)
     {
       const float w00 = weight_ptr[0], w10 = weight_ptr[1], w20 = weight_ptr[2], w30 = weight_ptr[3];
       const float w01 = weight_ptr[4], w11 = weight_ptr[5], w21 = weight_ptr[6], w31 = weight_ptr[7];
@@ -614,7 +649,10 @@ void nam::Conv1x1::process_(const Eigen::Ref<const Eigen::MatrixXf>& input, cons
         output_ptr[f * 4 + 3] = w30 * i0 + w31 * i1;
       }
     }
-    else if (out_ch == 3 && in_ch == 3)
+    else
+#endif
+#if NAM_INLINE_CONV1X1_3x3
+    if (out_ch == 3 && in_ch == 3)
     {
       const float w00 = weight_ptr[0], w10 = weight_ptr[1], w20 = weight_ptr[2];
       const float w01 = weight_ptr[3], w11 = weight_ptr[4], w21 = weight_ptr[5];
@@ -648,7 +686,10 @@ void nam::Conv1x1::process_(const Eigen::Ref<const Eigen::MatrixXf>& input, cons
         }
       }
     }
-    else if (out_ch == 4 && in_ch == 4)
+    else
+#endif
+#if NAM_INLINE_CONV1X1_4x4
+    if (out_ch == 4 && in_ch == 4)
     {
       const float w00 = weight_ptr[0],  w10 = weight_ptr[1],  w20 = weight_ptr[2],  w30 = weight_ptr[3];
       const float w01 = weight_ptr[4],  w11 = weight_ptr[5],  w21 = weight_ptr[6],  w31 = weight_ptr[7];
@@ -667,7 +708,10 @@ void nam::Conv1x1::process_(const Eigen::Ref<const Eigen::MatrixXf>& input, cons
         output_ptr[f * 4 + 3] = w30 * i0 + w31 * i1 + w32 * i2 + w33 * i3;
       }
     }
-    else if (out_ch == 6 && in_ch == 6)
+    else
+#endif
+#if NAM_INLINE_CONV1X1_6x6
+    if (out_ch == 6 && in_ch == 6)
     {
       for (int f = 0; f < num_frames; f++)
       {
@@ -682,7 +726,10 @@ void nam::Conv1x1::process_(const Eigen::Ref<const Eigen::MatrixXf>& input, cons
         }
       }
     }
-    else if (out_ch == 8 && in_ch == 8)
+    else
+#endif
+#if NAM_INLINE_CONV1X1_8x8
+    if (out_ch == 8 && in_ch == 8)
     {
       for (int f = 0; f < num_frames; f++)
       {
@@ -697,7 +744,10 @@ void nam::Conv1x1::process_(const Eigen::Ref<const Eigen::MatrixXf>& input, cons
         }
       }
     }
-    else if (out_ch == 4 && in_ch == 8)
+    else
+#endif
+#if NAM_INLINE_CONV1X1_4x8
+    if (out_ch == 4 && in_ch == 8)
     {
       for (int f = 0; f < num_frames; f++)
       {
@@ -712,7 +762,10 @@ void nam::Conv1x1::process_(const Eigen::Ref<const Eigen::MatrixXf>& input, cons
         }
       }
     }
-    else if (out_ch == 8 && in_ch == 4)
+    else
+#endif
+#if NAM_INLINE_CONV1X1_8x4
+    if (out_ch == 8 && in_ch == 4)
     {
       for (int f = 0; f < num_frames; f++)
       {
@@ -726,7 +779,9 @@ void nam::Conv1x1::process_(const Eigen::Ref<const Eigen::MatrixXf>& input, cons
       }
     }
     else
+#endif
     {
+#if NAM_INLINE_GENERIC_FALLBACK
       // Generic inline GEMM for any matrix size (avoids Eigen overhead for small matrices)
       for (int f = 0; f < num_frames; f++)
       {
@@ -742,6 +797,9 @@ void nam::Conv1x1::process_(const Eigen::Ref<const Eigen::MatrixXf>& input, cons
           out_col[o] = sum;
         }
       }
+#else
+      _output.leftCols(num_frames).noalias() = this->_weight * input.leftCols(num_frames);
+#endif
     }
 #else
     // Single GEMM for all cases - block-diagonal zero structure handles grouping
